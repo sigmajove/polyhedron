@@ -1,4 +1,5 @@
-import copy
+import cairo
+import math
 
 # A number expected to be a floating point rounding error away from zero.
 EPSILON = 1e-10
@@ -77,11 +78,28 @@ class Vector:
     def value(self):
         return (self.dx, self.dy, self.dz)
 
+    def magnitude(self):
+        return math.sqrt(
+            self.dx * self.dx + self.dy * self.dy + self.dz * self.dz
+        )
 
+
+# Returns the vector from vertices e0 to e1
 def delta_vector(e0, e1):
     assert isinstance(e0, Vertex)
     assert isinstance(e1, Vertex)
     return Vector(e1.x - e0.x, e1.y - e0.y, e1.z - e0.z)
+
+
+# Return the distance between two points.
+# May be in 2d or 3d
+def distance(p0, p1):
+    assert len(p0) == len(p1)
+    total = 0.0
+    for a, b in zip(p0, p1):
+        delta = a - b
+        total += delta * delta
+    return math.sqrt(total)
 
 
 def cross_product(v0, v1):
@@ -378,12 +396,155 @@ def find_faces(half_planes):
     faces = []
     for i in range(len(half_planes)):
         face = get_face(half_planes[i][1], half_planes[:i] + half_planes[i:])
-        assert len(face) == 4
+        edict = {}
+        n = len(face)
         for edge in face:
             assert isinstance(edge.e0, Vertex)
             assert isinstance(edge.e1, Vertex)
-        faces.append(face)
+            edict[edge.e0] = edge
+        e = face[0]
+        start = e
+        sorted = [e]
+        while True:
+            e = edict[e.e1]
+            if e is start:
+                break
+            sorted.append(e)
+            assert len(sorted) <= n
+        assert len(sorted) == n
+
+        faces.append(sorted)
     return faces
+
+
+# p0 and p1 are the last 2-d points drawn.
+# e0 and e1 are consecutive edges
+# determine and return p2, the next 2-d point.
+def next_point(p0, p1, edge0, edge1):
+    # Get the sin and cos of the angle between the two edges.
+    print("next_point")
+    print("p0", p0)
+    print("p1", p1)
+    print("edge0", edge0)
+    print("edge1", edge1)
+
+    vec0 = delta_vector(edge0.e1, edge0.e0)
+    vec1 = delta_vector(edge1.e0, edge1.e1)
+    print("vec0", vec0)
+    print("vec1", vec1)
+    cos_a = dot_product(vec0.value(), vec1.value()) / (
+        vec0.magnitude() * vec1.magnitude()
+    )
+    print("cos_a", cos_a)
+    sin_a = math.sqrt(1.0 - cos_a * cos_a)
+
+    # Get the sin and cos of the angle of the line segment from p0 to p1
+    d = distance(p0, p1)
+    sin_b = (p1[1] - p0[1]) / d
+    cos_b = (p1[0] - p0[0]) / d
+    print("sin_b", sin_b)
+    print("cos_b", cos_b)
+
+    # Compute the sin and cos of a-b
+    sin_diff = sin_a * cos_b - cos_a * sin_b
+    cos_diff = cos_a * cos_b + sin_a * sin_b
+    print("sin_diff", sin_diff)
+    print("cos_diff", cos_diff)
+    print("=====================")
+
+    x = p1[0] - d * cos_diff
+    y = p1[1] + d * sin_diff
+
+    return (x, y)
+
+
+def plot(faces, face_id, from_id, ctx):
+    print("Plotting face", face_id)
+    face = faces[face_id]
+    if from_id is None:
+        p0 = (0.0, 0.0)
+        ctx.move_to(*p0)
+        print("Move to", p0)
+        p1 = (delta_vector(face[0].e0, face[0].e1).magnitude(), 0.0)
+        face[0].plotted = p1
+        ctx.line_to(*p1)
+        print("line to", p1)
+        joined = face
+        prev_edge = face[0]
+        for edge in face[1:]:
+            next_p = next_point(p0, p1, prev_edge, edge)
+            prev_edge = edge
+            ctx.line_to(*next_p)
+            print("line to", next_p)
+            edge.plotted = next_p
+            p0 = p1
+            p1 = next_p
+        ctx.stroke()
+    else:
+        gappy = None
+        for i, e in enumerate(face):
+            if e.id == from_id:
+                gappy = i
+                break
+        assert gappy is not None
+        joined = face[gappy + 1 :] + face[:gappy]
+
+        from_face = faces[from_id]
+        found = None
+        pred_edge = from_face[-1]
+        for edge in from_face:
+            if edge.id == face_id:
+                found = edge
+                break
+            pred_edge = edge
+        assert found is not None
+        p0 = found.plotted
+        p1 = pred_edge.plotted
+        ctx.move_to(*p1)
+        prev_edge = face[gappy]
+        prev_edge.plotted = p1
+        for edge in joined:
+            next_p = next_point(p0, p1, prev_edge, edge)
+            prev_edge = edge
+            print(next_p)
+            ctx.line_to(*next_p)
+            edge.plotted = next_p
+            p0 = p1
+            p1 = next_p
+        ctx.stroke()
+    for f in face:
+        assert hasattr(f, "plotted")
+
+
+def flatten(faces):
+    with cairo.RecordingSurface(cairo.CONTENT_COLOR_ALPHA, None) as rs:
+        ctx = cairo.Context(rs)
+        ctx.scale(100.0, -100.0)
+        ctx.set_line_width(0.05)
+        ctx.set_source_rgba(0, 0, 0, 1)
+
+        visited = len(faces) * [False]
+
+        def dfs(from_id, i):
+            nonlocal visited
+
+            visited[i] = True
+            face = faces[i]
+            plot(faces, i, from_id, ctx)
+            for edge in face:
+                if not visited[edge.id]:
+                    dfs(i, edge.id)
+                    break
+
+        dfs(None, 0)
+
+        x, y, width, height = rs.ink_extents()
+        surface = cairo.SVGSurface("output.svg", width, height)
+        ccc = cairo.Context(surface)
+        ccc.set_source_surface(rs, -x, -y)
+        ccc.paint()
+        surface.finish()
+        surface.flush()
 
 
 def main():
@@ -395,7 +556,38 @@ def main():
     z_lo = [0.0, 0.0, -1.0, -1.0]
 
     faces = find_faces([x_lo, x_hi, y_lo, y_hi, z_lo, z_hi])
-    print(len(faces), "faces")
+    for i, f in enumerate(faces):
+        adj = [e.id for e in f]
+        print(f"{i}: {adj}")
+    flatten(faces)
+
+
+def make_octa_face(p0, p1, p2):
+    c = cross_product(delta_vector(p1, p0), delta_vector(p1, p2)).value()
+    return [*c, -dot_product(p0.value(), c)]
+
+
+def octa():
+    NW = Vertex(-1, 1, 0)
+    NE = Vertex(1, 1, 0)
+    SW = Vertex(-1, -1, 0)
+    SE = Vertex(1, -1, 0)
+    TOP = Vertex(0, 0, math.sqrt(2.0))
+    BOTTOM = Vertex(0, 0, -math.sqrt(2.0))
+    f0 = make_octa_face(SE, NE, TOP)
+    f1 = make_octa_face(NE, NW, TOP)
+    f2 = make_octa_face(NW, SW, TOP)
+    f3 = make_octa_face(SW, SE, TOP)
+    f4 = make_octa_face(NE, SE, BOTTOM)
+    f5 = make_octa_face(NW, NE, BOTTOM)
+    f6 = make_octa_face(SW, NW, BOTTOM)
+    f7 = make_octa_face(SE, SW, BOTTOM)
+    halves = [f0, f1, f2, f3, f4, f5, f6, f7]
+    faces = find_faces(halves)
+    for i, f in enumerate(faces):
+        adj = [e.id for e in f]
+        print(f"{i}: {adj}")
+    flatten(faces)
 
 
 NWU = (-1, +1, +1)
@@ -426,4 +618,4 @@ def point_image(point):
 
 
 if __name__ == "__main__":
-    main()
+    octa()
