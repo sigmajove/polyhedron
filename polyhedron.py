@@ -1,15 +1,16 @@
 import cairo
 import math
+import sys
 
 # A number expected to be a floating point rounding error away from zero.
 EPSILON = 1e-10
 
 
-# Determines whether a point is within a half-space
-def within(point, half_space):
-    x, y, z = point
-    a, b, c, d = half_space
-    return a * x + b * y + c * z + d <= 0.0
+# A half-space is defined by the typle (a, b, c, d)
+# (x, y, z) is in the half-space iff a * x + b * y + c * z + d <= 0
+# (a, b, c) defines the orientation of the plane that is the border.
+# It is a vector perpendicular to the border plane, pointing out of the
+# half space. The value d defines the position of the border plane.
 
 
 # dot product of two vectors
@@ -17,6 +18,11 @@ def dot_product(v0, v1):
     length = len(v0)
     assert length == len(v1)
     return sum(v0[i] * v1[i] for i in range(length))
+
+
+# Determines whether a point is within a half-space
+def within(point, half_space):
+    return dot_product(half_space[0:3], point) <= -half_space[3]
 
 
 # We use these objects rather than enum values. They are less error-prone
@@ -38,12 +44,20 @@ LEFT = Token("left")
 RIGHT = Token("right")
 
 
+ABS_TOL = 1.5e-14
 # A vertex is defined by (x, y, z) coordinates in three-space.
 class Vertex:
     def __init__(self, x, y, z):
         self.x = x
         self.y = y
         self.z = z
+
+    def isclose(self, other):
+        return (
+            math.isclose(self.x, other.x, abs_tol = ABS_TOL)
+            and math.isclose(self.y, other.y, abs_tol = ABS_TOL)
+            and math.isclose(self.z, other.z, abs_tol = ABS_TOL)
+        )
 
     def __repr__(self):
         return point_image(self.value())
@@ -69,10 +83,10 @@ class Vector:
         self.dy = -self.dy
         self.dz = -self.dz
 
-    # Move the tuple (x, y, z) along the vector.
-    def move(self, point):
-        x, y, z = point
-        return (x + self.dx, y + self.dy, z + self.dz)
+    # Return the point obtained by moving the vertex along the vector.
+    def move(self, vertex):
+        assert isinstance(vertex, Vertex)
+        return (vertex.x + self.dx, vertex.y + self.dy, vertex.z + self.dz)
 
     # Returns the xyz coordinate as a tuple.
     def value(self):
@@ -175,10 +189,10 @@ class Edge:
 
 
 # Given a plane and a line defined by a point and vector,
-# returns the point where the line crosses the plane.
+# returns the Vertex where the line crosses the plane.
 # Returns None if the line is (nearly) parallel to the plane.
 def plane_line(plane, point, vector):
-    if not isinstance(plane, list):
+    if not isinstance(plane, tuple):
         raise RuntimeError(f"Bad plane {plane}")
     assert len(plane) == 4
     assert isinstance(point, tuple)
@@ -189,7 +203,7 @@ def plane_line(plane, point, vector):
     px, py, pz = point
     vx, vy, vz = vector
 
-    denom = a * vx + b * vy + c * vz
+    denom = dot_product(plane[0:3], vector)
     if abs(denom) < EPSILON:
         # The line is (nearly) parallel to the plane.
         # There is no interesection.
@@ -199,7 +213,7 @@ def plane_line(plane, point, vector):
     x = px + t * vx
     y = py + t * vy
     z = pz + t * vz
-    return (x, y, z)
+    return Vertex(x, y, z)
 
 
 def trim_vertex_vertex(edge, half):
@@ -220,62 +234,143 @@ def trim_vertex_vertex(edge, half):
             # The vector from e0 to e1
             vector = [ev1[i] - ev0[i] for i in range(3)]
 
-            # The new point
-            new_point = Vertex(*plane_line(half, edge.e0.value(), vector))
+            # The new vertex
+            new_vertex = plane_line(half, edge.e0.value(), vector)
 
             # Replace the endpoint not in the half-space.
             if code == 1:
-                edge.e1 = new_point
+                edge.e1 = new_vertex
                 edge.action = NEW_E1
             else:
-                edge.e0 = new_point
+                edge.e0 = new_vertex
                 edge.action = NEW_E0
         case 3:
             # Both endpoints are in the half-space.
             edge.action = KEEP
 
 
-def trim_half_line(edge, half):
-    e0_is_vector = isinstance(edge.e0, Vector)
-    if e0_is_vector:
-        assert isinstance(edge.e1, Vertex)
-        vector = edge.e0.value()
-        vertex = edge.e1
-    else:
-        assert isinstance(edge.e0, Vertex)
-        assert isinstance(edge.e1, Vector)
-        vertex = edge.e0
-        vector = edge.e1.value()
-    point = vertex.value()
+def trim_vertex_vector(edge, half):
+    assert isinstance(edge.e0, Vertex)
+    assert isinstance(edge.e1, Vector)
+    vertex = edge.e0
+    vector = edge.e1
 
-    new_point = plane_line(half, point, vector)
-    if new_point is None:
-        # The line is parallel to the plane.
-        # Either we keep the entire edge or delete the entire edge.
-        edge.action = KEEP if within(point, half) else DELETE
-        return
-    new_vertex = Vertex(*new_point)
+    # Test if the vector points into or out of the half space.
+    # negative means into
+    # positive maeans out of
+    # zero means the vector is parallel to the border.
+    vector_dir = dot_product(half[0:3], vector.value())
 
-    if (
-        dot_product(delta_vector(vertex, new_vertex).value(), vector) > 0
-    ) ^ e0_is_vector:
-        # The point is on the half line
-        if e0_is_vector:
-            edge.e0 = new_vertex
-            edge.action = NEW_E0
-        else:
-            edge.e1 = new_vertex
-            edge.action = NEW_E1
-    else:
-        # The half-space does not intersect the half-line
+    # Test if point is within the half-space
+    # negative means inside the half-space
+    # positive means outside the half-space
+    # zero means on the border plane
+    point_within = dot_product(half[0:3], vertex.value()) + half[3]
+
+    # We use fuzzy comparisons to avoid making tiny changes
+    # due to roundoff errors. If both vector_dir and point_within are very
+    # close to zero, it means the vector is parallel to and very near the
+    # border plane. The conditions of both of the following if statements
+    # will be satsified. We err on the side of keeping the edge.
+    if vector_dir <= EPSILON and point_within <= EPSILON:
+        # The half-line is entirely inside the half-space
         edge.action = KEEP
+        return
+
+    if vector_dir >= -EPSILON and point_within >= -EPSILON:
+        # The half-line is entirely out of the half-space
+        edge.action = DELETE
+        return
+
+    assert abs(point_within) > EPSILON
+    assert abs(vector_dir) > EPSILON
+
+    # Compute the point where half space border interesects the line.
+    # Since the half-line is partially in the space, the new point
+    # must be on the half-line.
+    t = -point_within / vector_dir
+    new_vertex = Vertex(
+        vertex.x + t * vector.dx,
+        vertex.y + t * vector.dy,
+        vertex.z + t * vector.dz,
+    )
+
+    if vector_dir < 0:
+        # The vector points into the half-space.
+        edge.action = NEW_E0
+        edge.e0 = new_vertex
+    else:
+        # The vector points out the half-space.
+        edge.action = NEW_E1
+        edge.e1 = new_vertex
+
+
+def trim_vector_vertex(edge, half):
+    assert isinstance(edge.e0, Vector)
+    assert isinstance(edge.e1, Vertex)
+    vector = edge.e0
+    vertex = edge.e1
+
+    # Test if the vector points into or out of the half space.
+    # negative means into
+    # positive maeans out of
+    # zero means the vector is parallel to the border.
+    vector_dir = dot_product(half[0:3], vector.value())
+
+    # Test if point is within the half-space
+    # negative means inside the half-space
+    # positive means outside the half-space
+    # zero means on the border plane
+    point_within = dot_product(half[0:3], vertex.value()) + half[3]
+
+    # We use fuzzy comparisons to avoid making tiny changes
+    # due to roundoff errors. If both vector_dir and point_within are very
+    # close to zero, it means the vector is parallel to and very near the
+    # border plane. The conditions of both of the following if statements
+    # will be satsified. We err on the side of keeping the edge.
+    if vector_dir >= -EPSILON and point_within <= EPSILON:
+        # The half-line is entirely inside the half-space
+        edge.action = KEEP
+        return
+
+    if vector_dir <= EPSILON and point_within >= -EPSILON:
+        # The half-line is entirely out of the half-space
+        edge.action = DELETE
+        return
+
+    assert abs(point_within) > EPSILON
+    assert abs(vector_dir) > EPSILON
+
+    # Compute the point where half space border interesects the line.
+    # Since the half-line is partially in the space, the new point
+    # must be on the half-line.
+    t = -point_within / vector_dir
+    new_vertex = Vertex(
+        vertex.x + t * vector.dx,
+        vertex.y + t * vector.dy,
+        vertex.z + t * vector.dz,
+    )
+
+    if vector_dir < 0:
+        # The vector points into the half-space.
+        edge.action = NEW_E0
+        edge.e0 = new_vertex
+    else:
+        # The vector points out the half-space.
+        edge.action = NEW_E1
+        edge.e1 = new_vertex
 
 
 def trim(edge, half):
-    if isinstance(edge.e0, Vertex) and isinstance(edge.e1, Vertex):
-        trim_vertex_vertex(edge, half)
-    else:
-        trim_half_line(edge, half)
+    (
+        trim_vector_vertex
+        if isinstance(edge.e0, Vector)
+        else (
+            trim_vertex_vector
+            if isinstance(edge.e1, Vector)
+            else trim_vertex_vertex
+        )
+    )(edge, half)
 
 
 # Returns whethere two planes are (nearly) parallel.
@@ -293,18 +388,50 @@ def is_parallel(h1, h2):
     )
 
 
+# The point that is the intersection of three planes.
+# of which are parallel.
+def tripoint(plane0, plane1, plane2):
+    p10, vec10 = two_planes(plane0, plane1)
+    if p10 is None or vec10 is None:
+        return None
+    return plane_line(plane2, p10, vec10.value())
+
+
+# Brute force way of finding a face
+def brute_force(in_half, rest):
+    result = []
+    for i, h in enumerate(rest):
+        for j in range(i + 1, len(rest)):
+            point = tripoint(in_half, rest[i][1], rest[j][1])
+            if point is None:
+                continue
+            keep = True
+#            for k in range(0, len(rest)):
+#                if k == i or k == j:
+#                    continue
+#                if not within(point.value(), rest[k][1]):
+#                    keep = False
+#                    break
+            if keep:
+                result.append((point, rest[i][0], rest[j][0]))
+    return result
+
+
 def starter(plane0, idplane1, idplane2):
     id1, plane1 = idplane1
     id2, plane2 = idplane2
 
+    print("Start", plane_image(plane0))
+    print("slash1", plane_image(plane1))
+    print("slash2", plane_image(plane2))
+
     p10, vec10 = two_planes(plane0, plane1)
     _, vec20 = two_planes(plane2, plane0)
-    apex_point = plane_line(plane2, p10, vec10.value())
-    apex_vertex = Vertex(*apex_point)
+    apex_vertex = plane_line(plane2, p10, vec10.value())
 
-    if not within(vec10.move(apex_point), plane2):
+    if not within(vec10.move(apex_vertex), plane2):
         vec10.reverse()
-    if not within(vec20.move(apex_point), plane1):
+    if not within(vec20.move(apex_vertex), plane1):
         vec20.reverse()
 
     if dot_product(cross_product(vec10, vec20).value(), plane0[:3]) > 0:
@@ -315,9 +442,17 @@ def starter(plane0, idplane1, idplane2):
         return [Edge(vec20, apex_vertex, id2), Edge(apex_vertex, vec10, id1)]
 
 
+def show_edges(title, edges):
+    print(f"========== {title}")
+    for e in edges:
+        print(e)
+    print(f"==========")
+
+
 # Find the face in in_half formed by the interesection with all the
 # other half-planes.
 def get_face(in_half, rest):
+    print("get face")
     assert len(rest) >= 2
     rest = list(filter(lambda r: not is_parallel(in_half, r[1]), rest))
 
@@ -331,19 +466,25 @@ def get_face(in_half, rest):
     rest[1], rest[found] = rest[found], rest[1]
 
     edges = starter(in_half, rest[0], rest[1])
+    show_edges("starter", edges)
     for r in rest[2:]:
-        edges = add_half(edges, r, in_half)
+        name = plane_image(r[1])
+        edges = add_half(edges, r, in_half, name == "f3")
+        show_edges(f"Add half {name}", edges)
 
     return edges
 
 
 # Slices a face, keeping just the part in the half-plane
-def add_half(edges, idhalf, face_plane):
+def add_half(edges, idhalf, face_plane, trace):
     id, half = idhalf
     # Iterate over all the edges, and decide what to do
     # with each.
     for e in edges:
         trim(e, half)
+
+    if trace:
+        show_edges("after trim", edges)
 
     # Remove all the edges whose action is DELETE
     edges = list(filter(lambda e: e.action is not DELETE, edges))
@@ -379,14 +520,88 @@ def add_half(edges, idhalf, face_plane):
                 else:
                     e0 = edge.e1
             assert e0 is not None and e1 is not None
-            edges.append(Edge(e0, e1, id))
+            if not e0.isclose(e1):
+                edges.append(Edge(e0, e1, id))
 
         case _:
             raise RuntimeError(f"{len(pairs)} new vertices")
 
-    for e in edges:
-        e.action = KEEP
-    return edges
+    result = []
+    for edge in edges:
+        if (
+            isinstance(edge.e0, Vertex)
+            and isinstance(edge.e1, Vertex)
+            and edge.e0.isclose(edge.e1)
+        ):
+            continue
+        edge.action = KEEP
+        result.append(edge)
+    return result
+
+
+# Cope with lack of accuracy in Vertex computations.
+class VertexTable:
+    def __init__(self):
+        self.table = []
+
+    def insert(self, key, value):
+        assert isinstance(key, Vertex)
+        for k, _ in self.table:
+            if key.isclose(k):
+                raise RuntimeError("duplicate key")
+        self.table.append((key, value))
+
+    def find(self, key):
+        assert isinstance(key, Vertex)
+        for k, v in self.table:
+            if key.isclose(k):
+                return v
+        raise RuntimeError("key not found")
+
+
+class PointIntern:
+    def __init__(self):
+        self.points = []
+
+    def insert(self, vertex, faces):
+        for i, point in enumerate(self.points):
+            if vertex.isclose(point[0]):
+                for f in faces:
+                    point[1].add(f)
+                return i
+        self.points.append((vertex, set(faces)))
+        return len(self.points)
+
+
+
+def brute_faces(half_spaces):
+    points = PointIntern()
+    for i in range(0, len(half_spaces)):
+        half_i = half_spaces[i]
+        for j in range(i+1, len(half_spaces)):
+            half_j = half_spaces[j]
+            for k in range(j+1, len(half_spaces)):
+                half_k = half_spaces[k]
+                vertex = tripoint(half_i, half_j, half_k)
+                if vertex is not None:
+                    points.insert(vertex, (i, j, k))
+    
+    # Delete all the points that are outside the polyhedron.
+    result = []
+    for vertex, faces in points.points:
+        keep = True
+        for i, h in enumerate(half_spaces):
+            if i in faces:
+                continue
+
+            if dot_product(h[0:3], vertex.value()) + h[3] > EPSILON:
+                keep = False
+                break
+        if keep:
+            result.append((vertex, faces))
+
+    return result
+
 
 
 def find_faces(half_planes):
@@ -396,23 +611,24 @@ def find_faces(half_planes):
     faces = []
     for i in range(len(half_planes)):
         face = get_face(half_planes[i][1], half_planes[:i] + half_planes[i:])
-        edict = {}
+        edict = VertexTable()
         n = len(face)
         for edge in face:
             assert isinstance(edge.e0, Vertex)
             assert isinstance(edge.e1, Vertex)
-            edict[edge.e0] = edge
+            edict.insert(edge.e0, edge)
         e = face[0]
         start = e
         sorted = [e]
         while True:
-            e = edict[e.e1]
+            e = edict.find(e.e1)
             if e is start:
                 break
             sorted.append(e)
             assert len(sorted) <= n
         assert len(sorted) == n
 
+        show_edges("Sorted edges", sorted)
         faces.append(sorted)
     return faces
 
@@ -563,27 +779,62 @@ def main():
 
 
 def make_octa_face(p0, p1, p2):
-    c = cross_product(delta_vector(p1, p0), delta_vector(p1, p2)).value()
-    return [*c, -dot_product(p0.value(), c)]
+    c = cross_product(delta_vector(p1, p2), delta_vector(p1, p0)).value()
+    result = (*c, -dot_product(p0.value(), c))
+    assert within((0, 0, 0), result)
+    return result
+
+
+NW = Vertex(-1, 1, 0)
+NE = Vertex(1, 1, 0)
+SW = Vertex(-1, -1, 0)
+SE = Vertex(1, -1, 0)
+TOP = Vertex(0, 0, math.sqrt(2.0))
+BOTTOM = Vertex(0, 0, -math.sqrt(2.0))
+f0 = make_octa_face(SE, NE, TOP)
+f1 = make_octa_face(NE, NW, TOP)
+f2 = make_octa_face(NW, SW, TOP)
+f3 = make_octa_face(SW, SE, TOP)
+f4 = make_octa_face(NE, SE, BOTTOM)
+f5 = make_octa_face(NW, NE, BOTTOM)
+f6 = make_octa_face(SW, NW, BOTTOM)
+f7 = make_octa_face(SE, SW, BOTTOM)
+
+
+# Get rid of negative zero
+def normalize(plane):
+    result = tuple(0 if x == 0 else x for x in plane)
+    return result
+
+
+PLANES = {
+    normalize(f0): "f0",
+    normalize(f1): "f1",
+    normalize(f2): "f2",
+    normalize(f3): "f3",
+    normalize(f4): "f4",
+    normalize(f5): "f5",
+    normalize(f6): "f6",
+    normalize(f7): "f7",
+}
+
+
+def plane_image(f):
+    return PLANES[normalize(f)]
 
 
 def octa():
-    NW = Vertex(-1, 1, 0)
-    NE = Vertex(1, 1, 0)
-    SW = Vertex(-1, -1, 0)
-    SE = Vertex(1, -1, 0)
-    TOP = Vertex(0, 0, math.sqrt(2.0))
-    BOTTOM = Vertex(0, 0, -math.sqrt(2.0))
-    f0 = make_octa_face(SE, NE, TOP)
-    f1 = make_octa_face(NE, NW, TOP)
-    f2 = make_octa_face(NW, SW, TOP)
-    f3 = make_octa_face(SW, SE, TOP)
-    f4 = make_octa_face(NE, SE, BOTTOM)
-    f5 = make_octa_face(NW, NE, BOTTOM)
-    f6 = make_octa_face(SW, NW, BOTTOM)
-    f7 = make_octa_face(SE, SW, BOTTOM)
     halves = [f0, f1, f2, f3, f4, f5, f6, f7]
-    faces = find_faces(halves)
+    faces = brute_faces(halves)
+    for f in faces:
+        print(f)
+    return
+    for i, f in enumerate(faces):
+        print ("======face", i)
+        for g in f:
+            print ("vertex", g[0])
+            print ("connecting", g[1:])
+    return
     for i, f in enumerate(faces):
         adj = [e.id for e in f]
         print(f"{i}: {adj}")
