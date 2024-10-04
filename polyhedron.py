@@ -45,6 +45,8 @@ RIGHT = Token("right")
 
 
 ABS_TOL = 1.5e-14
+
+
 # A vertex is defined by (x, y, z) coordinates in three-space.
 class Vertex:
     def __init__(self, x, y, z):
@@ -54,9 +56,9 @@ class Vertex:
 
     def isclose(self, other):
         return (
-            math.isclose(self.x, other.x, abs_tol = ABS_TOL)
-            and math.isclose(self.y, other.y, abs_tol = ABS_TOL)
-            and math.isclose(self.z, other.z, abs_tol = ABS_TOL)
+            math.isclose(self.x, other.x, abs_tol=ABS_TOL)
+            and math.isclose(self.y, other.y, abs_tol=ABS_TOL)
+            and math.isclose(self.z, other.z, abs_tol=ABS_TOL)
         )
 
     def __repr__(self):
@@ -406,12 +408,12 @@ def brute_force(in_half, rest):
             if point is None:
                 continue
             keep = True
-#            for k in range(0, len(rest)):
-#                if k == i or k == j:
-#                    continue
-#                if not within(point.value(), rest[k][1]):
-#                    keep = False
-#                    break
+            #            for k in range(0, len(rest)):
+            #                if k == i or k == j:
+            #                    continue
+            #                if not within(point.value(), rest[k][1]):
+            #                    keep = False
+            #                    break
             if keep:
                 result.append((point, rest[i][0], rest[j][0]))
     return result
@@ -573,19 +575,18 @@ class PointIntern:
         return len(self.points)
 
 
-
 def brute_faces(half_spaces):
     points = PointIntern()
     for i in range(0, len(half_spaces)):
         half_i = half_spaces[i]
-        for j in range(i+1, len(half_spaces)):
+        for j in range(i + 1, len(half_spaces)):
             half_j = half_spaces[j]
-            for k in range(j+1, len(half_spaces)):
+            for k in range(j + 1, len(half_spaces)):
                 half_k = half_spaces[k]
                 vertex = tripoint(half_i, half_j, half_k)
                 if vertex is not None:
                     points.insert(vertex, (i, j, k))
-    
+
     # Delete all the points that are outside the polyhedron.
     result = []
     for vertex, faces in points.points:
@@ -600,8 +601,23 @@ def brute_faces(half_spaces):
         if keep:
             result.append((vertex, faces))
 
-    return result
+    # Locate all edges.
+    print("Begin edges")
+    for i in range(len(result)):
+        v_i, f_i = result[i]
+        for j in range(i + 1, len(result)):
+            v_j, f_j = result[j]
+            faces = f_i.intersection(f_j)
+            match len(faces):
+                case 2:
+                    print(v_i.value(), v_j.value(), faces)
+                case 0:
+                    pass
+                case _:
+                    raise RuntimeError(f"Bad set {faces}")
+    print("end edges")
 
+    return result
 
 
 def find_faces(half_planes):
@@ -830,10 +846,10 @@ def octa():
         print(f)
     return
     for i, f in enumerate(faces):
-        print ("======face", i)
+        print("======face", i)
         for g in f:
-            print ("vertex", g[0])
-            print ("connecting", g[1:])
+            print("vertex", g[0])
+            print("connecting", g[1:])
     return
     for i, f in enumerate(faces):
         adj = [e.id for e in f]
