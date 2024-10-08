@@ -1,6 +1,8 @@
 import cairo
+import collections
 import math
 import sys
+from collections.abc import Iterable
 
 # A number expected to be a floating point rounding error away from zero.
 EPSILON = 1e-10
@@ -194,7 +196,7 @@ class Edge:
 # returns the Vertex where the line crosses the plane.
 # Returns None if the line is (nearly) parallel to the plane.
 def plane_line(plane, point, vector):
-    if not isinstance(plane, tuple):
+    if not isinstance(plane, Iterable):
         raise RuntimeError(f"Bad plane {plane}")
     assert len(plane) == 4
     assert isinstance(point, tuple)
@@ -575,6 +577,18 @@ class PointIntern:
         return len(self.points)
 
 
+# Given three consecutive verticies on a face,
+# returns whether their order is counterclockwise
+def is_counterclockwise(v0, v1, v2, face):
+    return (
+        dot_product(
+            cross_product(delta_vector(v0, v1), delta_vector(v1, v2)).value(),
+            face[0:3],
+        )
+        > 0
+    )
+
+
 def brute_faces(half_spaces):
     points = PointIntern()
     for i in range(0, len(half_spaces)):
@@ -586,7 +600,6 @@ def brute_faces(half_spaces):
                 vertex = tripoint(half_i, half_j, half_k)
                 if vertex is not None:
                     points.insert(vertex, (i, j, k))
-
     # Delete all the points that are outside the polyhedron.
     result = []
     for vertex, faces in points.points:
@@ -602,7 +615,7 @@ def brute_faces(half_spaces):
             result.append((vertex, faces))
 
     # Locate all edges.
-    print("Begin edges")
+    face_edges = [[] for _ in range(len(half_spaces))]
     for i in range(len(result)):
         v_i, f_i = result[i]
         for j in range(i + 1, len(result)):
@@ -610,14 +623,219 @@ def brute_faces(half_spaces):
             faces = f_i.intersection(f_j)
             match len(faces):
                 case 2:
-                    print(v_i.value(), v_j.value(), faces)
-                case 0:
-                    pass
+                    f = list(faces)
+                    face_edges[f[0]].append((v_i, v_j, f[1]))
+                    face_edges[f[1]].append((v_i, v_j, f[0]))
                 case _:
-                    raise RuntimeError(f"Bad set {faces}")
-    print("end edges")
+                    pass
 
+    result = []
+    for z, fe in enumerate(face_edges):
+        v0, v1, f = fe[0]
+        vertices = None
+        for v2, v3, g in fe[1:]:
+            if v2 == v1:
+                if is_counterclockwise(v0, v1, v3, half_spaces[z]):
+                    vertices = [v0, v1, v3]
+                    faces = [f, g]
+                else:
+                    vertices = [v3, v1, v0]
+                    faces = [g, f]
+                break
+            if v3 == v1:
+                if is_counterclockwise(v0, v1, v2, half_spaces[z]):
+                    vertices = [v0, v1, v2]
+                    faces = [f, g]
+                else:
+                    vertices = [v2, v1, v0]
+                    faces = [g, f]
+                break
+        if not vertices:
+            raise RuntimeError("face failure")
+        while True:
+            next_v = None
+            for v0, v1, f in fe:
+                if {v0, v1} == {vertices[-1], vertices[-2]}:
+                    continue
+                if v0 == vertices[-1]:
+                    next_v = v1
+                    break
+                if v1 == vertices[-1]:
+                    next_v = v0
+                    break
+            if next_v is None:
+                raise RuntimeError("face failure")
+            faces.append(f)
+            if next_v == vertices[0]:
+                break
+            vertices.append(next_v)
+            if len(vertices) > len(fe):
+                raise RuntimeError("face failure")
+        result.append((vertices, faces))
     return result
+
+
+# Input is a list.
+# The i'th element of the list is (vertices, faces)
+#  where vertices is a list of Vertex objects in counterclockwise order.
+#  and faces[i] is the other face containing vertices[i], vertices[i+1]
+def plot_pattern(faces):
+    with cairo.RecordingSurface(cairo.CONTENT_COLOR_ALPHA, None) as rs:
+        ctx = cairo.Context(rs)
+        ctx.scale(100.0, -100.0)
+        ctx.set_line_width(0.05)
+        ctx.set_source_rgba(0, 0, 0, 1)
+        ctx.set_font_size(0.5)
+        ctx.select_font_face(
+            "Arial", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL
+        )
+
+        pending = len(faces) * [False]
+        q = collections.deque(((None, 0),))
+        pending[0] = True
+
+        count = 0
+
+        # plotted[(face, Vertex)] maps to the (x, y) 2-d (x, y) coordinate
+        plotted = {}
+
+        while len(q):
+            from_face, i = q.popleft()
+            print("****** Plot face", i, "from", from_face)
+            plot_face(faces, i, from_face, plotted, ctx)
+            count += 1
+
+            if count >= 100:
+                break
+            for f in faces[i][1]:
+                if not pending[f]:
+                    q.append((i, f))
+                    pending[f] = True
+
+        x, y, width, height = rs.ink_extents()
+        print("surface", width, height)
+        surface = cairo.SVGSurface(
+            "C:/Users/sigma/Documents/polygon.svg", width, height
+        )
+        ccc = cairo.Context(surface)
+        ccc.set_source_surface(rs, -x, -y)
+        ccc.paint()
+        surface.finish()
+        surface.flush()
+
+
+def centroid(points):
+    n = len(points)
+    return (sum(p[0] for p in points) / n, sum(p[1] for p in points) / n)
+
+
+def plot_face(poly, this_face, from_face, plotted, ctx):
+    vertices, faces = poly[this_face]
+    assert len(vertices) == len(faces)
+    assert len(vertices) >= 3
+    print("vertices", vertices)
+    print("faces", faces)
+    print("from face", from_face)
+
+    if from_face is None:
+        # Find the coordinates of all the vertices of the face.
+        plist = [
+            (0.0, 0.0),
+            (delta_vector(vertices[0], vertices[1]).magnitude(), 0.0),
+        ]
+        for i in range(2, len(vertices)):
+            plist.append(
+                find_next_point(*vertices[i - 2 : i + 1], plist[-2], plist[-1])
+            )
+
+        assert len(vertices) == len(plist)
+        for v, c in zip(vertices, plist):
+            plotted[(this_face, v)] = c
+
+        ctx.move_to(*plist[0])
+        for c in plist[1:]:
+            ctx.line_to(*c)
+        ctx.close_path()
+        ctx.stroke()
+
+    else:
+        pos = faces.index(from_face)
+        print("pos", pos)
+
+        # Reorder the vertices so that vertices[0] and vertices[1]
+        # are also in from_face.
+        vertices = vertices[pos:] + vertices[:pos]
+
+        plist = [plotted[(from_face, vertices[i])] for i in range(2)]
+        for i in range(2, len(vertices)):
+            print("plist", plist)
+            plist.append(
+                find_next_point(*vertices[i - 2 : i + 1], plist[-2], plist[-1])
+            )
+        assert len(vertices) == len(plist)
+        for v, c in zip(vertices, plist):
+            plotted[(this_face, v)] = c
+
+        ctx.move_to(*plist[1])
+        for c in plist[2:]:
+            ctx.line_to(*c)
+        ctx.line_to(*plist[0])
+        ctx.stroke()
+
+    # Label the face
+    text = f"f{this_face}"
+    x_bearing, y_bearing, width, height, x_advance, y_advance = (
+        ctx.text_extents(text)
+    )
+    ctx.save()
+    cen = centroid(plist)
+    ctx.translate(*cen)
+    ctx.scale(1, -1)
+    ctx.move_to(-width / 2, height / 2)
+    ctx.show_text(text)
+    ctx.restore()
+
+
+# To map the 3d coordinates of the vertices to 2d, we define an
+# auxiliary attribute "plotted" to each Vertex to store its 2d
+# coordinates. If v0, v1, and v2 are three successive (counterclockwise)
+# vertices of a face in 3-space, and v0, and v1 have been plotted,
+# determine the 2-d coordinates of v2, and store them as the "plotted"
+# attribute.
+def find_next_point(v0, v1, v2, p0, p1):
+    print("Begin next point")
+    print("v0", v0)
+    print("v1", v1)
+    print("v2", v2)
+    print("p0", p0)
+    print("p1", p1)
+    # Get the sin and cos of the angle between the angle defined
+    # by v0, v1, v2 in 3-space
+    vec01 = delta_vector(v0, v1)
+    vec12 = delta_vector(v1, v2)
+    cos_a = dot_product(vec01.value(), vec12.value()) / (
+        vec01.magnitude() * vec12.magnitude()
+    )
+    sin_a = math.sqrt(1.0 - cos_a * cos_a)
+    print("3d angle", math.atan2(sin_a, cos_a) * 180 / math.pi)
+
+    # Get the sin and cos of the angle of the line segment from p0 to p1
+    d = distance(p0, p1)
+    sin_b = (p1[1] - p0[1]) / d
+    cos_b = (p1[0] - p0[0]) / d
+
+    # Compute the sin and cos of a+b
+    sin_sum = sin_a * cos_b + cos_a * sin_b
+    cos_sum = cos_a * cos_b - sin_a * sin_b
+
+    d = vec12.magnitude()
+    print("vec v1 -> v2", vec12)
+    print("vec12 mag", d)
+    x = p1[0] + d * cos_sum
+    y = p1[1] + d * sin_sum
+
+    print("=========== Next point", x, y)
+    return (x, y)
 
 
 def find_faces(half_planes):
@@ -771,7 +989,9 @@ def flatten(faces):
         dfs(None, 0)
 
         x, y, width, height = rs.ink_extents()
-        surface = cairo.SVGSurface("output.svg", width, height)
+        surface = cairo.SVGSurface(
+            "C:/Users/sigma/Documents/polygon.svg", width, height
+        )
         ccc = cairo.Context(surface)
         ccc.set_source_surface(rs, -x, -y)
         ccc.paint()
@@ -779,7 +999,8 @@ def flatten(faces):
         surface.flush()
 
 
-def main():
+# Make a pattern for a cube
+def cube():
     x_hi = [1.0, 0.0, 0.0, -1.0]
     x_lo = [-1.0, 0.0, 0.0, -1.0]
     y_hi = [0.0, 1.0, 0.0, -1.0]
@@ -787,11 +1008,7 @@ def main():
     z_hi = [0, 0.0, 1.0, -1.0]
     z_lo = [0.0, 0.0, -1.0, -1.0]
 
-    faces = find_faces([x_lo, x_hi, y_lo, y_hi, z_lo, z_hi])
-    for i, f in enumerate(faces):
-        adj = [e.id for e in f]
-        print(f"{i}: {adj}")
-    flatten(faces)
+    plot_pattern(brute_faces([x_lo, x_hi, y_lo, y_hi, z_lo, z_hi]))
 
 
 def make_octa_face(p0, p1, p2):
@@ -841,20 +1058,7 @@ def plane_image(f):
 
 def octa():
     halves = [f0, f1, f2, f3, f4, f5, f6, f7]
-    faces = brute_faces(halves)
-    for f in faces:
-        print(f)
-    return
-    for i, f in enumerate(faces):
-        print("======face", i)
-        for g in f:
-            print("vertex", g[0])
-            print("connecting", g[1:])
-    return
-    for i, f in enumerate(faces):
-        adj = [e.id for e in f]
-        print(f"{i}: {adj}")
-    flatten(faces)
+    plot_pattern(brute_faces(halves))
 
 
 NWU = (-1, +1, +1)
@@ -885,4 +1089,4 @@ def point_image(point):
 
 
 if __name__ == "__main__":
-    octa()
+    cube()
