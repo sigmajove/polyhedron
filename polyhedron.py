@@ -1,7 +1,9 @@
 import cairo
 import collections
+import json
 import math
-import sys
+import numpy
+import struct
 from collections.abc import Iterable
 
 # A number expected to be a floating point rounding error away from zero.
@@ -47,6 +49,7 @@ RIGHT = Token("right")
 
 
 ABS_TOL = 1.5e-14
+REL_TOL = 1e-8
 
 
 # A vertex is defined by (x, y, z) coordinates in three-space.
@@ -58,9 +61,9 @@ class Vertex:
 
     def isclose(self, other):
         return (
-            math.isclose(self.x, other.x, abs_tol=ABS_TOL)
-            and math.isclose(self.y, other.y, abs_tol=ABS_TOL)
-            and math.isclose(self.z, other.z, abs_tol=ABS_TOL)
+            math.isclose(self.x, other.x, rel_tol=REL_TOL, abs_tol=ABS_TOL)
+            and math.isclose(self.y, other.y, rel_tol=REL_TOL, abs_tol=ABS_TOL)
+            and math.isclose(self.z, other.z, rel_tol=REL_TOL, abs_tol=ABS_TOL)
         )
 
     def __repr__(self):
@@ -100,6 +103,20 @@ class Vector:
         return math.sqrt(
             self.dx * self.dx + self.dy * self.dy + self.dz * self.dz
         )
+
+    # Returns a vector of magnitude 1 in the same direction as self.
+    def normalize(self):
+        m = self.magnitude()
+        return Vector(self.dx / m, self.dy / m, self.dz / m)
+
+    # Return self multiplied by scalar s
+    def scale(self, s):
+        return Vector(self.dx * s, self.dy * s, self.dz * s)
+
+    # Return the sum self and v
+    def add(self, v):
+        assert isinstance(v, Vector)
+        return Vector(self.dx + v.dx, self.dy + v.dy, self.dz + v.dz)
 
 
 # Returns the vector from vertices e0 to e1
@@ -392,33 +409,46 @@ def is_parallel(h1, h2):
     )
 
 
+def test_result(x, plane0, plane1, plane2):
+    if x is None:
+        return
+    print(
+        *(
+            dot_product(x.value(), p[0:3]) + p[3]
+            for p in (plane0, plane1, plane2)
+        )
+    )
+
+
 # The point that is the intersection of three planes.
 # of which are parallel.
-def tripoint(plane0, plane1, plane2):
+def tripoint_old(plane0, plane1, plane2):
     p10, vec10 = two_planes(plane0, plane1)
     if p10 is None or vec10 is None:
-        return None
-    return plane_line(plane2, p10, vec10.value())
+        result = None
+    else:
+        result = plane_line(plane2, p10, vec10.value())
 
-
-# Brute force way of finding a face
-def brute_force(in_half, rest):
-    result = []
-    for i, h in enumerate(rest):
-        for j in range(i + 1, len(rest)):
-            point = tripoint(in_half, rest[i][1], rest[j][1])
-            if point is None:
-                continue
-            keep = True
-            #            for k in range(0, len(rest)):
-            #                if k == i or k == j:
-            #                    continue
-            #                if not within(point.value(), rest[k][1]):
-            #                    keep = False
-            #                    break
-            if keep:
-                result.append((point, rest[i][0], rest[j][0]))
+    print ("me", result)
+    test_result(result, plane0, plane1, plane2)
+    tripoint2(plane0, plane1, plane2)
+    print("=====================")
     return result
+
+
+def tripoint(plane0, plane1, plane2):
+    try:
+        x = Vertex(
+            *numpy.linalg.solve(
+                numpy.array([plane0[0:3], plane1[0:3], plane2[0:3]]),
+                numpy.array([-plane0[3], -plane1[3], -plane2[3]]),
+            ).tolist(),
+        )
+    except numpy.linalg.LinAlgError:
+        x = None
+    # print ("np", x)
+    # test_result(x, plane0, plane1, plane2)
+    return x
 
 
 def starter(plane0, idplane1, idplane2):
@@ -451,96 +481,6 @@ def show_edges(title, edges):
     for e in edges:
         print(e)
     print(f"==========")
-
-
-# Find the face in in_half formed by the interesection with all the
-# other half-planes.
-def get_face(in_half, rest):
-    print("get face")
-    assert len(rest) >= 2
-    rest = list(filter(lambda r: not is_parallel(in_half, r[1]), rest))
-
-    # Permute rest so that rest[0] and rest[1] are not parallel.
-    found = None
-    for i in range(1, len(rest)):
-        if not is_parallel(rest[0][1], rest[i][1]):
-            found = i
-            break
-    assert found is not None
-    rest[1], rest[found] = rest[found], rest[1]
-
-    edges = starter(in_half, rest[0], rest[1])
-    show_edges("starter", edges)
-    for r in rest[2:]:
-        name = plane_image(r[1])
-        edges = add_half(edges, r, in_half, name == "f3")
-        show_edges(f"Add half {name}", edges)
-
-    return edges
-
-
-# Slices a face, keeping just the part in the half-plane
-def add_half(edges, idhalf, face_plane, trace):
-    id, half = idhalf
-    # Iterate over all the edges, and decide what to do
-    # with each.
-    for e in edges:
-        trim(e, half)
-
-    if trace:
-        show_edges("after trim", edges)
-
-    # Remove all the edges whose action is DELETE
-    edges = list(filter(lambda e: e.action is not DELETE, edges))
-
-    # Find all the edges containing newly created vertices.
-    pairs = list(filter(lambda e: e.action in (NEW_E0, NEW_E1), edges))
-    match len(pairs):
-        case 0:
-            pass
-        case 1:
-            edge = pairs[0]
-            old_vector = delta_vector(edge.e0, edge.e1)
-            _, new_vector = two_planes(face_plane, half)
-            if (
-                dot_product(
-                    face_plane[:3],
-                    cross_product(old_vector, new_vector).value(),
-                )
-                > 0
-            ) ^ (edge.action is NEW_E0):
-                new_vector.reverse()
-            if edge.action is NEW_E0:
-                edges.append(Edge(new_vector, edge.e0, id))
-            else:
-                edges.append(Edge(edge.e1, new_vector, id))
-
-        case 2:
-            e0 = None
-            e1 = None
-            for edge in pairs:
-                if edge.action is NEW_E0:
-                    e1 = edge.e0
-                else:
-                    e0 = edge.e1
-            assert e0 is not None and e1 is not None
-            if not e0.isclose(e1):
-                edges.append(Edge(e0, e1, id))
-
-        case _:
-            raise RuntimeError(f"{len(pairs)} new vertices")
-
-    result = []
-    for edge in edges:
-        if (
-            isinstance(edge.e0, Vertex)
-            and isinstance(edge.e1, Vertex)
-            and edge.e0.isclose(edge.e1)
-        ):
-            continue
-        edge.action = KEEP
-        result.append(edge)
-    return result
 
 
 # Cope with lack of accuracy in Vertex computations.
@@ -576,6 +516,12 @@ class PointIntern:
         self.points.append((vertex, set(faces)))
         return len(self.points)
 
+    def key(self, vertex):
+        for i in range(len(self.points)):
+            if self.points[i][0] == vertex:
+                return i
+        return len(self.points)
+
 
 # Given three consecutive verticies on a face,
 # returns whether their order is counterclockwise
@@ -589,7 +535,33 @@ def is_counterclockwise(v0, v1, v2, face):
     )
 
 
+# Returns the area of a polygon with the given vertices in order.
+# Assumes all the vertices are coplanar.
+def area(vertices):
+    v0 = vertices[0]
+    vecs = [(delta_vector(v0, v)) for v in vertices[1:]]
+    return 0.5 * sum(
+        cross_product(vecs[i - 1], vecs[i]).magnitude()
+        for i in range(1, len(vecs))
+    )
+
+
+def test():
+    p0 = Vertex(0, 0, 40)
+    p1 = Vertex(10, 0, 40)
+    p2 = Vertex(10, 10, 40)
+    print(area((p0, p1, p2)))
+    print(area((p1, p2, p0)))
+    print(area((p2, p0, p1)))
+
+
+pole_area = 0
+barrel_area = 0
+
+
 def brute_faces(half_spaces):
+    global pole_area
+    global barrel_area
     points = PointIntern()
     for i in range(0, len(half_spaces)):
         half_i = half_spaces[i]
@@ -599,7 +571,7 @@ def brute_faces(half_spaces):
                 half_k = half_spaces[k]
                 vertex = tripoint(half_i, half_j, half_k)
                 if vertex is not None:
-                    points.insert(vertex, (i, j, k))
+                    zzz = points.insert(vertex, (i, j, k))
     # Delete all the points that are outside the polyhedron.
     result = []
     for vertex, faces in points.points:
@@ -630,6 +602,8 @@ def brute_faces(half_spaces):
                     pass
 
     result = []
+    pole_area = 0
+    barrel_area = 0
     for z, fe in enumerate(face_edges):
         v0, v1, f = fe[0]
         vertices = None
@@ -670,58 +644,84 @@ def brute_faces(half_spaces):
                 break
             vertices.append(next_v)
             if len(vertices) > len(fe):
+                print (f"Error on face {z+1}")
                 raise RuntimeError("face failure")
+        face_area = area(vertices)
+        if len(result) <= 9:
+            pole_area += face_area
+        else:
+            barrel_area += face_area
         result.append((vertices, faces))
+    pole_area /= 10
+    barrel_area /= 8
     return result
 
 
-# Input is a list.
-# The i'th element of the list is (vertices, faces)
-#  where vertices is a list of Vertex objects in counterclockwise order.
-#  and faces[i] is the other face containing vertices[i], vertices[i+1]
-def plot_pattern(faces):
-    with cairo.RecordingSurface(cairo.CONTENT_COLOR_ALPHA, None) as rs:
-        ctx = cairo.Context(rs)
-        ctx.scale(100.0, -100.0)
-        ctx.set_line_width(0.05)
-        ctx.set_source_rgba(0, 0, 0, 1)
-        ctx.set_font_size(0.5)
-        ctx.select_font_face(
-            "Arial", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL
-        )
+def find_vertex(this_face, other_face, poly):
+    v, f = poly[this_face]
+    return v[f.index(other_face)]
 
-        pending = len(faces) * [False]
-        q = collections.deque(((None, 0),))
-        pending[0] = True
 
-        count = 0
+class better_pattern:
+    def __init__(self, poly):
+        self.poly = poly
+        self.is_drawn = len(poly) * [False]
+        self.plotted = {}
+        self.candidates = []
 
-        # plotted[(face, Vertex)] maps to the (x, y) 2-d (x, y) coordinate
-        plotted = {}
+    def make_pattern(self):
+        with cairo.RecordingSurface(cairo.CONTENT_COLOR_ALPHA, None) as rs:
+            ctx = cairo.Context(rs)
+            ctx.scale(100.0, -100.0)
+            ctx.set_line_width(0.05)
+            ctx.set_source_rgba(0, 0, 0, 1)
+            ctx.set_font_size(0.5)
+            ctx.select_font_face(
+                "Arial", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL
+            )
+            self.ctx = ctx
 
-        while len(q):
-            from_face, i = q.popleft()
-            print("****** Plot face", i, "from", from_face)
-            plot_face(faces, i, from_face, plotted, ctx)
-            count += 1
+            self.do_plot()
 
-            if count >= 100:
-                break
-            for f in faces[i][1]:
-                if not pending[f]:
-                    q.append((i, f))
-                    pending[f] = True
+            x, y, width, height = rs.ink_extents()
+            surface = cairo.SVGSurface(
+                "C:/Users/sigma/Documents/polygon.svg", width, height
+            )
+            ccc = cairo.Context(surface)
+            ccc.set_source_surface(rs, -x, -y)
+            ccc.paint()
+            surface.finish()
+            surface.flush()
 
-        x, y, width, height = rs.ink_extents()
-        print("surface", width, height)
-        surface = cairo.SVGSurface(
-            "C:/Users/sigma/Documents/polygon.svg", width, height
-        )
-        ccc = cairo.Context(surface)
-        ccc.set_source_surface(rs, -x, -y)
-        ccc.paint()
-        surface.finish()
-        surface.flush()
+    def draw_and_append(self, this_face, from_face):
+        # print(f"Drawing {this_face}")
+        plot_face(self.poly, this_face, from_face, self.plotted, self.ctx)
+        self.is_drawn[this_face] = True
+        for adj in self.poly[this_face][1]:
+            if not self.is_drawn[adj]:
+                edge_length = delta_vector(
+                    find_vertex(this_face, adj, self.poly),
+                    find_vertex(adj, this_face, self.poly),
+                ).magnitude()
+                self.candidates.append((edge_length, this_face, adj))
+        # print("Candidates now")
+        # for length, this_f, adj_f in self.candidates:
+        #    print(f"{length}: {this_f} -> {adj_f}")
+
+    def do_plot(self):
+        self.draw_and_append(0, None)
+        while self.candidates:
+            max_edge = None
+            for i in range(len(self.candidates)):
+                edge_length = self.candidates[i][0]
+                if max_edge is None or edge_length > max_edge:
+                    max_edge = edge_length
+                    next_i = i
+            _, from_face, this_face = self.candidates[next_i]
+            self.candidates = list(
+                filter(lambda c: c[2] != this_face, self.candidates)
+            )
+            self.draw_and_append(this_face, from_face)
 
 
 def centroid(points):
@@ -733,9 +733,6 @@ def plot_face(poly, this_face, from_face, plotted, ctx):
     vertices, faces = poly[this_face]
     assert len(vertices) == len(faces)
     assert len(vertices) >= 3
-    print("vertices", vertices)
-    print("faces", faces)
-    print("from face", from_face)
 
     if from_face is None:
         # Find the coordinates of all the vertices of the face.
@@ -760,7 +757,6 @@ def plot_face(poly, this_face, from_face, plotted, ctx):
 
     else:
         pos = faces.index(from_face)
-        print("pos", pos)
 
         # Reorder the vertices so that vertices[0] and vertices[1]
         # are also in from_face.
@@ -768,7 +764,6 @@ def plot_face(poly, this_face, from_face, plotted, ctx):
 
         plist = [plotted[(from_face, vertices[i])] for i in range(2)]
         for i in range(2, len(vertices)):
-            print("plist", plist)
             plist.append(
                 find_next_point(*vertices[i - 2 : i + 1], plist[-2], plist[-1])
             )
@@ -783,7 +778,7 @@ def plot_face(poly, this_face, from_face, plotted, ctx):
         ctx.stroke()
 
     # Label the face
-    text = f"f{this_face}"
+    text = f"{1+this_face}"
     x_bearing, y_bearing, width, height, x_advance, y_advance = (
         ctx.text_extents(text)
     )
@@ -803,12 +798,6 @@ def plot_face(poly, this_face, from_face, plotted, ctx):
 # determine the 2-d coordinates of v2, and store them as the "plotted"
 # attribute.
 def find_next_point(v0, v1, v2, p0, p1):
-    print("Begin next point")
-    print("v0", v0)
-    print("v1", v1)
-    print("v2", v2)
-    print("p0", p0)
-    print("p1", p1)
     # Get the sin and cos of the angle between the angle defined
     # by v0, v1, v2 in 3-space
     vec01 = delta_vector(v0, v1)
@@ -817,7 +806,6 @@ def find_next_point(v0, v1, v2, p0, p1):
         vec01.magnitude() * vec12.magnitude()
     )
     sin_a = math.sqrt(1.0 - cos_a * cos_a)
-    print("3d angle", math.atan2(sin_a, cos_a) * 180 / math.pi)
 
     # Get the sin and cos of the angle of the line segment from p0 to p1
     d = distance(p0, p1)
@@ -829,42 +817,10 @@ def find_next_point(v0, v1, v2, p0, p1):
     cos_sum = cos_a * cos_b - sin_a * sin_b
 
     d = vec12.magnitude()
-    print("vec v1 -> v2", vec12)
-    print("vec12 mag", d)
     x = p1[0] + d * cos_sum
     y = p1[1] + d * sin_sum
 
-    print("=========== Next point", x, y)
     return (x, y)
-
-
-def find_faces(half_planes):
-    # Assign an id to each half-plane
-    half_planes = list(enumerate(half_planes))
-
-    faces = []
-    for i in range(len(half_planes)):
-        face = get_face(half_planes[i][1], half_planes[:i] + half_planes[i:])
-        edict = VertexTable()
-        n = len(face)
-        for edge in face:
-            assert isinstance(edge.e0, Vertex)
-            assert isinstance(edge.e1, Vertex)
-            edict.insert(edge.e0, edge)
-        e = face[0]
-        start = e
-        sorted = [e]
-        while True:
-            e = edict.find(e.e1)
-            if e is start:
-                break
-            sorted.append(e)
-            assert len(sorted) <= n
-        assert len(sorted) == n
-
-        show_edges("Sorted edges", sorted)
-        faces.append(sorted)
-    return faces
 
 
 # p0 and p1 are the last 2-d points drawn.
@@ -872,35 +828,22 @@ def find_faces(half_planes):
 # determine and return p2, the next 2-d point.
 def next_point(p0, p1, edge0, edge1):
     # Get the sin and cos of the angle between the two edges.
-    print("next_point")
-    print("p0", p0)
-    print("p1", p1)
-    print("edge0", edge0)
-    print("edge1", edge1)
 
     vec0 = delta_vector(edge0.e1, edge0.e0)
     vec1 = delta_vector(edge1.e0, edge1.e1)
-    print("vec0", vec0)
-    print("vec1", vec1)
     cos_a = dot_product(vec0.value(), vec1.value()) / (
         vec0.magnitude() * vec1.magnitude()
     )
-    print("cos_a", cos_a)
     sin_a = math.sqrt(1.0 - cos_a * cos_a)
 
     # Get the sin and cos of the angle of the line segment from p0 to p1
     d = distance(p0, p1)
     sin_b = (p1[1] - p0[1]) / d
     cos_b = (p1[0] - p0[0]) / d
-    print("sin_b", sin_b)
-    print("cos_b", cos_b)
 
     # Compute the sin and cos of a-b
     sin_diff = sin_a * cos_b - cos_a * sin_b
     cos_diff = cos_a * cos_b + sin_a * sin_b
-    print("sin_diff", sin_diff)
-    print("cos_diff", cos_diff)
-    print("=====================")
 
     x = p1[0] - d * cos_diff
     y = p1[1] + d * sin_diff
@@ -909,23 +852,19 @@ def next_point(p0, p1, edge0, edge1):
 
 
 def plot(faces, face_id, from_id, ctx):
-    print("Plotting face", face_id)
     face = faces[face_id]
     if from_id is None:
         p0 = (0.0, 0.0)
         ctx.move_to(*p0)
-        print("Move to", p0)
         p1 = (delta_vector(face[0].e0, face[0].e1).magnitude(), 0.0)
         face[0].plotted = p1
         ctx.line_to(*p1)
-        print("line to", p1)
         joined = face
         prev_edge = face[0]
         for edge in face[1:]:
             next_p = next_point(p0, p1, prev_edge, edge)
             prev_edge = edge
             ctx.line_to(*next_p)
-            print("line to", next_p)
             edge.plotted = next_p
             p0 = p1
             p1 = next_p
@@ -964,39 +903,6 @@ def plot(faces, face_id, from_id, ctx):
         ctx.stroke()
     for f in face:
         assert hasattr(f, "plotted")
-
-
-def flatten(faces):
-    with cairo.RecordingSurface(cairo.CONTENT_COLOR_ALPHA, None) as rs:
-        ctx = cairo.Context(rs)
-        ctx.scale(100.0, -100.0)
-        ctx.set_line_width(0.05)
-        ctx.set_source_rgba(0, 0, 0, 1)
-
-        visited = len(faces) * [False]
-
-        def dfs(from_id, i):
-            nonlocal visited
-
-            visited[i] = True
-            face = faces[i]
-            plot(faces, i, from_id, ctx)
-            for edge in face:
-                if not visited[edge.id]:
-                    dfs(i, edge.id)
-                    break
-
-        dfs(None, 0)
-
-        x, y, width, height = rs.ink_extents()
-        surface = cairo.SVGSurface(
-            "C:/Users/sigma/Documents/polygon.svg", width, height
-        )
-        ccc = cairo.Context(surface)
-        ccc.set_source_surface(rs, -x, -y)
-        ccc.paint()
-        surface.finish()
-        surface.flush()
 
 
 # Make a pattern for a cube
@@ -1061,6 +967,193 @@ def octa():
     plot_pattern(brute_faces(halves))
 
 
+def tweak():
+    with open("points18.json", "r") as file:
+        halves = json.load(file)
+    for h in halves:
+        h.append(-1.0)
+
+    adjust_min = True
+    while True:
+        poly = brute_faces(halves)
+        min_area = None
+        max_area = None
+        for i in range(0, len(poly), 2):
+            vertices = poly[i][0]
+            a = area(vertices)
+            if min_area is None or a < min_area:
+                min_area = a
+                min_index = i
+            if max_area is None or a > max_area:
+                max_area = a
+                max_index = i
+        ratio = 1 + (max_area / min_area - 1.0) / 10
+        if ratio < 1.0000001:
+            better_pattern(poly).make_pattern()
+            break
+        if adjust_min:
+            halves[min_index][3] /= ratio
+            halves[min_index + 1][3] /= ratio
+        else:
+            halves[max_index][3] *= ratio
+            halves[max_index + 1][3] *= ratio
+        adjust_min = not adjust_min
+
+
+def nudge(halves):
+    poly = brute_faces(halves)
+
+    # Compute the area of every face
+    areas = [area(v) for v, _ in poly]
+
+    # Iterate over every edge
+    max_ratio = None
+    for i, (vertices, faces) in enumerate(poly):
+        for f in faces:
+            ratio = areas[i] / areas[f]
+            if max_ratio is None or ratio > max_ratio:
+                max_ratio = ratio
+                max_i = i
+                max_f = f
+    print("max_ratio", max_ratio, "at", max_i, max_f)
+    nudge_value = 1 + (max_ratio - 1.0) / 10.0
+
+    # Nudge halves[f] towards halves[i] along the great circle
+    # that connects the two points.
+    # See https://www.johndcook.com/blog/2021/11/26/great-circle-equation/
+    vec_i = Vector(*halves[i][0:3])
+    vec_f = Vector(*halves[f][0:3])
+    z = cross_product(vec_i, vec_f)
+
+    # Get the angle from vec_i to vec_f
+    sin_theta = z.magnitude()
+    cos_theta = dot_product(vec_i.value(), vec_f.value())
+    theta = math.atan2(sin_theta, cos_theta)
+
+    u = cross_product(z, vec_i).normalize()
+
+    # Increase theta a little
+    t = theta / nudge_value
+    nudged_f = vec_i.scale(math.cos(t)).add(u.scale(math.sin(t)))
+
+    halves[f][0:3] = nudged_f.value()
+
+
+def read_halves(filename):
+    halves = []
+    buffer = []
+    with open(filename, "rb") as file:
+        while True:
+            bytes = file.read(8)
+            if not bytes:
+                break
+            buffer.append((struct.unpack("d", bytes))[0])
+            if len(buffer) == 4:
+                halves.append(tuple(buffer))
+                buffer.clear()
+    assert len(buffer) == 0
+    return halves
+
+
+def main():
+    halves = []
+    buffer = []
+    with open("c:/users/sigma/documents/halves.bin", "rb") as file:
+        while True:
+            bytes = file.read(8)
+            if not bytes:
+                break
+            buffer.append((struct.unpack("d", bytes))[0])
+            if len(buffer) == 4:
+                halves.append(tuple(buffer))
+                buffer.clear()
+    assert len(buffer) == 0
+    assert len(halves) == 18
+    poly = brute_faces(halves)
+    better_pattern(poly).make_pattern()
+
+
+def attempt(phi):
+    coords = []
+    #           1     3     5     7     9
+    weights = [8390, 8670, 8030, 8760, 8200]
+    total = float(sum(weights))
+    for i in range(5):
+        angle = 2.0 * math.pi * sum(weights[: i + 1]) / total
+        coords.append((angle, phi))
+    equator = math.pi / 2
+    #          11    13    15     17
+    weights = [950, 920, 930, 950]
+    total = float(sum(weights))
+    for i in range(4):
+        angle = math.pi * sum(weights[: i + 1]) / total
+        coords.append((angle, equator))
+
+    # Convert to Cartesian
+    halves = []
+    for theta, phi in coords:
+        sin_phi = math.sin(phi)
+        x = math.cos(theta) * sin_phi
+        y = math.sin(theta) * sin_phi
+        z = math.cos(phi)
+        halves.append((x, y, z, -1.0))
+        halves.append((-x, -y, -z, -1.0))
+
+    poly = brute_faces(halves)
+    return poly
+
+
+def custom():
+    left = 35.0 * math.pi / 180.0
+    right = 40 * math.pi / 180.0
+    attempt(left)
+    attempt(right)
+    for i in range(20):
+        midpoint = 0.5 * (left + right)
+        poly = attempt(midpoint)
+        if pole_area > barrel_area:
+            right = midpoint
+        else:
+            left = midpoint
+
+    for i, p in enumerate(poly):
+        print(f"Face {i+1} has {len(p[0])} sides")
+    areas = [area(p[0]) for p in poly]
+    average = sum(areas) / len(poly)
+    signif = [1, 3, 5, 7, 9, 11, 13, 15, 17]
+    for i in signif:
+        diff = areas[i - 1] - average
+        print(f"Face {i} {'+' if diff > 0 else '-'}{round(10000*abs(diff))}")
+    # better_pattern(poly).make_pattern()
+    return poly
+
+
+def debug_model():
+    halves = read_halves("c:/users/sigma/documents/bad_model.bin")
+    better_pattern(brute_faces(halves)).make_pattern()
+
+
+def topper():
+    coords = []
+    phi = 40.0 * math.pi / 180.0
+    for i in range(0, 18, 2):
+        coords.append((i * 2.0 * math.pi / 18.0, phi))
+    phi = math.pi - phi
+    for i in range(1, 19, 2):
+        coords.append((i * 2.0 * math.pi / 18.0, phi))
+
+    # Convert to cartesian coordinates
+    halves = []
+    for theta, phi in coords:
+        sin_phi = math.sin(phi)
+        x = math.cos(theta) * sin_phi
+        y = math.sin(theta) * sin_phi
+        z = math.cos(phi)
+        halves.append((x, y, z, -1.0))
+        halves.append((-x, -y, z, -1.0))
+    better_pattern(brute_faces(halves)).make_pattern()
+
+
 NWU = (-1, +1, +1)
 NEU = (+1, +1, +1)
 SWU = (-1, -1, +1)
@@ -1089,4 +1182,4 @@ def point_image(point):
 
 
 if __name__ == "__main__":
-    cube()
+    debug_model()
