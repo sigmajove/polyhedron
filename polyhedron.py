@@ -1,10 +1,13 @@
 import cairo
 import collections
+import copy
 import json
 import math
 import numpy
 import struct
 from collections.abc import Iterable
+from fontTools.ttLib import TTFont
+from fontTools.pens.boundsPen import BoundsPen
 
 # A number expected to be a floating point rounding error away from zero.
 EPSILON = 1e-10
@@ -69,6 +72,10 @@ class Vertex:
     def __repr__(self):
         return point_image(self.value())
 
+    # Returns a vector whose head is self and tail is other.
+    def __sub__(self, other):
+        return Vector(self.x - other.x, self.y - other.y, self.z - other.z)
+
     # Returns the xyz coordinate as a tuple.
     def value(self):
         return (self.x, self.y, self.z)
@@ -114,7 +121,7 @@ class Vector:
         return Vector(self.dx * s, self.dy * s, self.dz * s)
 
     # Return the sum self and v
-    def add(self, v):
+    def __add__(self, v):
         assert isinstance(v, Vector)
         return Vector(self.dx + v.dx, self.dy + v.dy, self.dz + v.dz)
 
@@ -429,7 +436,7 @@ def tripoint_old(plane0, plane1, plane2):
     else:
         result = plane_line(plane2, p10, vec10.value())
 
-    print ("me", result)
+    print("me", result)
     test_result(result, plane0, plane1, plane2)
     tripoint2(plane0, plane1, plane2)
     print("=====================")
@@ -559,7 +566,7 @@ pole_area = 0
 barrel_area = 0
 
 
-def brute_faces(half_spaces):
+def make_polygon(half_spaces):
     global pole_area
     global barrel_area
     points = PointIntern()
@@ -572,6 +579,7 @@ def brute_faces(half_spaces):
                 vertex = tripoint(half_i, half_j, half_k)
                 if vertex is not None:
                     zzz = points.insert(vertex, (i, j, k))
+
     # Delete all the points that are outside the polyhedron.
     result = []
     for vertex, faces in points.points:
@@ -644,14 +652,18 @@ def brute_faces(half_spaces):
                 break
             vertices.append(next_v)
             if len(vertices) > len(fe):
-                print (f"Error on face {z+1}")
+                print(f"Error on face {z+1}")
                 raise RuntimeError("face failure")
         face_area = area(vertices)
         if len(result) <= 9:
             pole_area += face_area
         else:
             barrel_area += face_area
-        result.append((vertices, faces))
+
+        # Unit vector pointing out of the half space
+        normal = Vector(*half_spaces[z][0:3]).normalize()
+
+        result.append((vertices, faces, normal))
     pole_area /= 10
     barrel_area /= 8
     return result
@@ -660,6 +672,180 @@ def brute_faces(half_spaces):
 def find_vertex(this_face, other_face, poly):
     v, f = poly[this_face]
     return v[f.index(other_face)]
+
+
+def start_draw():
+    rs = cairo.RecordingSurface(cairo.CONTENT_COLOR_ALPHA, None)
+    ctx = cairo.Context(rs)
+    ctx.scale(1.0, -1.0)
+    ctx.set_line_width(0.4)
+    ctx.set_source_rgba(0, 0, 0, 1)
+    return (rs, ctx)
+
+
+def finish_draw(rs, ctx, filename):
+    x, y, width, height = rs.ink_extents()
+    surface = cairo.SVGSurface(
+        f"C:/Users/sigma/Documents/{filename}.svg", width, height
+    )
+    ccc = cairo.Context(surface)
+    ccc.set_source_surface(rs, -x, -y)
+    ccc.paint()
+    surface.flush()
+    surface.finish()
+    del ccc
+    del ctx
+    rs.finish()
+
+
+class print_faces:
+    def __init__(self, poly):
+        self.poly = poly
+        self.first = True
+        self.y_top = 0.0
+
+        rs = cairo.RecordingSurface(cairo.CONTENT_COLOR_ALPHA, None)
+        ctx = cairo.Context(rs)
+        ctx.scale(100.0, -100.0)
+        ctx.set_line_width(0.02)
+        ctx.set_source_rgba(0, 0, 0, 1)
+        self.rs = rs
+        self.ctx = ctx
+
+    def finish(self):
+        x, y, width, height = self.rs.ink_extents()
+        surface = cairo.SVGSurface(
+            "C:/Users/sigma/Documents/faces.svg", width, height
+        )
+        ccc = cairo.Context(surface)
+        ccc.set_source_surface(self.rs, -x, -y)
+        ccc.paint()
+        self.rs.finish()
+        surface.finish()
+        surface.flush()
+        del ccc
+        del self.ctx
+
+    def find_vertex(self, faces):
+        result = None
+        for f in faces:
+            vertices = self.poly[f][0]
+            v_set = set(v for v in vertices)
+            if result is None:
+                result = v_set
+            else:
+                result = result.intersection(v_set)
+        assert len(result) == 1
+        self.vertex = next(iter(result))
+
+    def rotate_face(self, i):
+        vertices = self.poly[i][0]
+        apex = vertices.index(self.vertex)
+        prev = vertices[(apex - 1) % len(vertices)]
+        next = vertices[(apex + 1) % len(vertices)]
+        vx0 = Vertex(*prev.value())
+        vx1 = Vertex(*self.vertex.value())
+        vx2 = Vertex(*next.value())
+
+        y_axis = (
+            ((vx1 - vx0).normalize() + (vx1 - vx2).normalize())
+            .scale(0.5)
+            .normalize()
+        )
+
+        x_axis = cross_product(y_axis, self.poly[i][2])
+        flat = []
+        min_y = math.inf
+        max_y = -math.inf
+        for vx in vertices:
+            x = dot_product(x_axis.value(), vx.value())
+            y = dot_product(y_axis.value(), vx.value())
+            if y < min_y:
+                min_y = y
+            if y > max_y:
+                max_y = y
+            flat.append([x, y])
+
+        # Shift left/right so the x coordinate of the apex is zero
+        align = flat[apex][0]
+        updown = self.y_top - max_y
+        for f in flat:
+            f[0] -= align
+            f[1] += updown
+
+        self.ctx.move_to(*flat[0])
+        for xy in flat[1:]:
+            self.ctx.line_to(*xy)
+        self.ctx.close_path()
+        self.ctx.stroke()
+        self.first = False
+
+        self.y_top -= max_y - min_y + 0.25
+
+    def poles(self, faces):
+        self.find_vertex(faces)
+        for f in faces:
+            self.rotate_face(f)
+
+    def barrel(self, i):
+        print("Barrel")
+        vertices = self.poly[i][0]
+        prev = vertices[-1]
+        top = None
+        bottom = None
+        for v in vertices:
+            if prev.z > 0 and v.z < 0:
+                assert top is None
+                top = copy.deepcopy(v)
+                top_length = (v - prev).magnitude()
+                top.z = 0.0
+
+            if prev.z < 0 and v.z > 0:
+                assert bottom is None
+                bottom = copy.deepcopy(v)
+                bottom_length = (v - prev).magnitude()
+                bottom.z = 0.0
+            prev = v
+        assert bottom is not None
+        assert top is not None
+
+        print("top_length", top_length)
+        print("bot_length", bottom_length)
+
+        y_axis = (top - bottom).normalize()
+        x_axis = cross_product(y_axis, self.poly[i][2])
+
+        flat = []
+        min_y = math.inf
+        max_y = -math.inf
+        for vx in vertices:
+            x = dot_product(x_axis.value(), vx.value())
+            y = dot_product(y_axis.value(), vx.value())
+            if y < min_y:
+                min_y = y
+            if y > max_y:
+                max_y = y
+            flat.append([x, y])
+
+        updown = self.y_top - max_y
+
+        tx = dot_product(x_axis.value(), top.value())
+        ty = dot_product(y_axis.value(), top.value()) + updown
+
+        bx = dot_product(x_axis.value(), bottom.value())
+        by = dot_product(y_axis.value(), bottom.value()) + updown
+
+        for f in flat:
+            f[1] += updown
+
+        self.ctx.move_to(*flat[0])
+        for xy in flat[1:]:
+            self.ctx.line_to(*xy)
+        self.ctx.close_path()
+        self.ctx.stroke()
+        self.first = False
+
+        self.y_top -= max_y - min_y + 0.25
 
 
 class better_pattern:
@@ -914,7 +1100,7 @@ def cube():
     z_hi = [0, 0.0, 1.0, -1.0]
     z_lo = [0.0, 0.0, -1.0, -1.0]
 
-    plot_pattern(brute_faces([x_lo, x_hi, y_lo, y_hi, z_lo, z_hi]))
+    plot_pattern(make_polygon([x_lo, x_hi, y_lo, y_hi, z_lo, z_hi]))
 
 
 def make_octa_face(p0, p1, p2):
@@ -964,7 +1150,7 @@ def plane_image(f):
 
 def octa():
     halves = [f0, f1, f2, f3, f4, f5, f6, f7]
-    plot_pattern(brute_faces(halves))
+    plot_pattern(make_polygon(halves))
 
 
 def tweak():
@@ -975,7 +1161,7 @@ def tweak():
 
     adjust_min = True
     while True:
-        poly = brute_faces(halves)
+        poly = make_polygon(halves)
         min_area = None
         max_area = None
         for i in range(0, len(poly), 2):
@@ -998,45 +1184,6 @@ def tweak():
             halves[max_index][3] *= ratio
             halves[max_index + 1][3] *= ratio
         adjust_min = not adjust_min
-
-
-def nudge(halves):
-    poly = brute_faces(halves)
-
-    # Compute the area of every face
-    areas = [area(v) for v, _ in poly]
-
-    # Iterate over every edge
-    max_ratio = None
-    for i, (vertices, faces) in enumerate(poly):
-        for f in faces:
-            ratio = areas[i] / areas[f]
-            if max_ratio is None or ratio > max_ratio:
-                max_ratio = ratio
-                max_i = i
-                max_f = f
-    print("max_ratio", max_ratio, "at", max_i, max_f)
-    nudge_value = 1 + (max_ratio - 1.0) / 10.0
-
-    # Nudge halves[f] towards halves[i] along the great circle
-    # that connects the two points.
-    # See https://www.johndcook.com/blog/2021/11/26/great-circle-equation/
-    vec_i = Vector(*halves[i][0:3])
-    vec_f = Vector(*halves[f][0:3])
-    z = cross_product(vec_i, vec_f)
-
-    # Get the angle from vec_i to vec_f
-    sin_theta = z.magnitude()
-    cos_theta = dot_product(vec_i.value(), vec_f.value())
-    theta = math.atan2(sin_theta, cos_theta)
-
-    u = cross_product(z, vec_i).normalize()
-
-    # Increase theta a little
-    t = theta / nudge_value
-    nudged_f = vec_i.scale(math.cos(t)).add(u.scale(math.sin(t)))
-
-    halves[f][0:3] = nudged_f.value()
 
 
 def read_halves(filename):
@@ -1069,24 +1216,21 @@ def main():
                 buffer.clear()
     assert len(buffer) == 0
     assert len(halves) == 18
-    poly = brute_faces(halves)
+    poly = make_polygon(halves)
     better_pattern(poly).make_pattern()
 
 
-def attempt(phi):
+def attempt(phi, weights):
     coords = []
-    #           1     3     5     7     9
-    weights = [8390, 8670, 8030, 8760, 8200]
-    total = float(sum(weights))
+    total = float(sum(weights[:5]))
     for i in range(5):
         angle = 2.0 * math.pi * sum(weights[: i + 1]) / total
         coords.append((angle, phi))
+
+    total = float(sum(weights[5:]))
     equator = math.pi / 2
-    #          11    13    15     17
-    weights = [950, 920, 930, 950]
-    total = float(sum(weights))
-    for i in range(4):
-        angle = math.pi * sum(weights[: i + 1]) / total
+    for i in range(5, len(weights)):
+        angle = math.pi * sum(weights[5 : i + 1]) / total
         coords.append((angle, equator))
 
     # Convert to Cartesian
@@ -1099,38 +1243,314 @@ def attempt(phi):
         halves.append((x, y, z, -1.0))
         halves.append((-x, -y, -z, -1.0))
 
-    poly = brute_faces(halves)
+    poly = make_polygon(halves)
     return poly
 
 
-def custom():
+def iteration(weights):
     left = 35.0 * math.pi / 180.0
     right = 40 * math.pi / 180.0
-    attempt(left)
-    attempt(right)
-    for i in range(20):
+    attempt(left, weights)
+    attempt(right, weights)
+    for _ in range(20):
         midpoint = 0.5 * (left + right)
-        poly = attempt(midpoint)
+        poly = attempt(midpoint, weights)
         if pole_area > barrel_area:
             right = midpoint
         else:
             left = midpoint
-
-    for i, p in enumerate(poly):
-        print(f"Face {i+1} has {len(p[0])} sides")
-    areas = [area(p[0]) for p in poly]
-    average = sum(areas) / len(poly)
-    signif = [1, 3, 5, 7, 9, 11, 13, 15, 17]
-    for i in signif:
-        diff = areas[i - 1] - average
-        print(f"Face {i} {'+' if diff > 0 else '-'}{round(10000*abs(diff))}")
-    # better_pattern(poly).make_pattern()
     return poly
+
+
+def two_thirds(oncurve, ctrl):
+    return ((oncurve[0] + 2 * ctrl[0]) / 3.0, (oncurve[1] + 2 * ctrl[1]) / 3.0)
+
+
+class BoundingBoxPen:
+    def __init__(self, scale):
+        self.scale = scale
+        self.min_x = math.inf
+        self.max_x = -math.inf
+        self.min_y = math.inf
+        self.max_y = -math.inf
+        self.last_p = None
+
+    def scale_point(self, p):
+        return (self.scale * p[0], self.scale * p[1])
+
+    def record(self, p):
+        if p[0] > self.max_x:
+            self.max_x = p[0]
+        if p[0] < self.min_x:
+            self.min_x = p[0]
+        if p[1] > self.max_y:
+            self.max_y = p[1]
+        if p[1] < self.min_y:
+            self.min_y = p[1]
+        self.last_p = p
+
+    def moveTo(self, p):
+        self.record(self.scale_point(p))
+
+    def lineTo(self, p):
+        self.record(self.scale_point(p))
+
+    def oneCurve(self, p1, p2):
+        # https://www.shadertoy.com/view/lsyfWc
+        p0 = self.last_p
+        assert p0 is not None
+
+        # extremes
+        mi = [min(a, b) for a, b in zip(p0, p2)]
+        ma = [max(a, b) for a, b in zip(p0, p2)]
+
+        # if p1 is outside the current bbox/hull
+        if any(p1[i] < mi[i] or p1[i] > ma[i] for i in range(2)):
+            # See https://iquilezles.org/articles/bezierbbox/
+            # p = (1-t)^2*p0 + 2(1-t)t*p1 + t^2*p2
+            # dp/dt = 2(t-1)*p0 + 2(1-2t)*p1 + 2t*p2 =
+            #     t*(2*p0-4*p1+2*p2) + 2*(p1-p0)
+            # dp/dt = 0 -> t*(p0-2*p1+p2) = (p0-p1);
+
+            for i in range(2):
+                t = (p0[i] - p1[i]) / (p0[i] - 2 * p1[i] + p2[i])
+                if t < 0.0:
+                    t = 0.0
+                elif t > 1.0:
+                    t = 1.0
+                s = 1.0 - t
+                q = s * s * p0[i] + 2 * s * t * p1[i] + t * t * p2[i]
+
+                if q < mi[i]:
+                    mi[i] = q
+                if q > ma[i]:
+                    ma[i] = q
+
+        if ma[0] > self.max_x:
+            self.max_x = ma[0]
+        if mi[0] < self.min_x:
+            self.min_x = mi[0]
+        if ma[1] > self.max_y:
+            self.max_y = ma[1]
+        if mi[1] < self.min_y:
+            self.min_y = mi[1]
+
+        self.last_p = p1
+
+    def qCurveTo(self, *args):
+        assert len(args) == 2 or len(args) == 3
+        scaled = [self.scale_point(a) for a in args]
+        if len(scaled) == 2:
+            self.oneCurve(scaled[0], scaled[1])
+        else:
+            implicit = tuple(
+                0.5 * (scaled[0][i] + scaled[1][i]) for i in range(2)
+            )
+            self.oneCurve(scaled[0], implicit)
+            self.oneCurve(scaled[1], scaled[2])
+
+    def closePath(self):
+        pass
+
+
+class CairoPen:
+    def __init__(self, rs, ctx, scale):
+        self.rs = rs
+        self.ctx = ctx
+        self.scale = scale
+        self.x_offset = 0
+
+    def set_trim_x(self, xmin):
+        self.trim_x = xmin
+
+    def advance_x(self, dx):
+        self.x_offset += dx
+
+    def scale_point(self, p):
+        return (
+            self.scale * p[0] - self.trim_x + self.x_offset,
+            self.scale * p[1],
+        )
+
+    def moveTo(self, p0):
+        self.ctx.move_to(*self.scale_point(p0))
+
+    def lineTo(self, p1):
+        self.ctx.line_to(*self.scale_point(p1))
+
+    def oneCurve(self, on, off):
+        ct1 = two_thirds(self.ctx.get_current_point(), off)
+        ct2 = two_thirds(on, off)
+        self.ctx.curve_to(*ct1, *ct2, *on)
+
+    def qCurveTo(self, *args):
+        assert len(args) == 2 or len(args) == 3
+        scaled = [self.scale_point(a) for a in args]
+        if len(scaled) == 2:
+            self.oneCurve(scaled[1], scaled[0])
+        else:
+            implicit = tuple(
+                0.5 * (scaled[0][i] + scaled[1][i]) for i in range(2)
+            )
+            self.oneCurve(implicit, scaled[0])
+            self.oneCurve(scaled[2], scaled[1])
+
+    def closePath(self):
+        self.ctx.close_path()
+        self.ctx.stroke()
+
+
+def font_stuff():
+    font = TTFont(
+        "c:/Users/sigma/AppData/Local/Microsoft/Windows\
+/Fonts/Helvetica-Bold.ttf"
+    )
+
+    rs, ctx = start_draw()
+    cairo_pen = CairoPen(rs, ctx, scale=0.1)
+
+    glyphSet = font.getGlyphSet()
+    for s in (
+        "zero",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+    ):
+        glyph = glyphSet[s]
+        bounding_pen = BoundingBoxPen(scale=0.1)
+        glyph.draw(bounding_pen)
+        print("y bounds", bounding_pen.min_y, bounding_pen.max_y)
+        cairo_pen.set_trim_x(bounding_pen.min_x)
+        glyph.draw(cairo_pen)
+        x_width = bounding_pen.max_x - bounding_pen.min_x
+        cairo_pen.advance_x(x_width + 150 * cairo_pen.scale)
+
+    finish_draw(rs, ctx, "font")
+
+
+def plot_faces():
+    weights = [
+        0987.57259746581451054226,
+        1035.38120169441140205890,
+        0954.69453935047556569771,
+        1036.79718497324597592524,
+        0985.34222651605227838445,
+        1019.27739583333345763094,
+        0981.56770833333337122895,
+        0988.71962500000006457412,
+        1013.32433333333335667703,
+    ]
+    poly = iteration(weights)
+    p = print_faces(poly)
+    p.poles([0, 2, 4, 6, 8])
+    p.poles([1, 3, 5, 7, 9])
+    for i in (10, 12, 14, 16, 11, 13, 15, 17):
+        p.barrel(i)
+    p.finish()
+
+
+class Rigid:
+    # Define a rigid transformation that maps
+    # from0 to to0 and from1 to to1
+    # The distance from from0 to to0 must equal
+    # the distance from from1 to to1
+    def __init__(self, from0, to0, from1, to1):
+        self.origin = from0
+        self.dx = from1[0] - from0[0]
+        self.dy = from1[1] - from0[1]
+
+        v0 = self.normvec(to0, from0)
+        v1 = self.normvec(to1, from1)
+        self.cos_t = v0[0] * v1[0] + v0[1] * v1[1]
+        self.sin_t = v0[0] * v1[1] - v0[1] * v1[0]
+
+    # The normal vector in the direction from f to to t.
+    # f and t must be different points.
+    def normvec(pos, t, f):
+        dx = t[0] - f[0]
+        dy = t[1] - f[1]
+        r = math.sqrt(dx * dx + dy * dy)
+        return (dx / r, dy / r)
+
+    # Translate p
+    def move(self, p):
+        v0 = p[0] - self.origin[0]
+        v1 = p[1] - self.origin[1]
+        r = math.sqrt(v0 * v0 + v1 * v1)
+
+        if r < EPSILON:
+            return (p[0] + self.dx, p[1] + self.dy)
+
+        cos_u = v0 / r
+        sin_u = v1 / r
+
+        cos_x = self.cos_t * cos_u - self.sin_t * sin_u
+        sin_x = self.sin_t * cos_u + sin_u * self.cos_t
+
+        return (
+            self.origin[0] + r * cos_x + self.dx,
+            self.origin[1] + r * sin_x + self.dy,
+        )
+
+
+def custom():
+    weights = [
+        0987.57259746581451054226,
+        1035.38120169441140205890,
+        0954.69453935047556569771,
+        1036.79718497324597592524,
+        0985.34222651605227838445,
+        1019.27739583333345763094,
+        0981.56770833333337122895,
+        0988.71962500000006457412,
+        1013.32433333333335667703,
+    ]
+
+    poly = iteration(weights)
+    areas = [area(p[0]) for p in poly]
+    best_score = min(areas) / max(areas)
+    print(f"Score {best_score}")
+    mod = 0.001
+    for _ in range(0):
+        best_adj = None
+
+        for i in range(0, len(weights)):
+            for sign in range(-1, 2, 2):
+                adj = weights.copy()
+                adj[i] += math.copysign(mod, sign)
+                poly = iteration(adj)
+                areas = [area(p[0]) for p in poly]
+                adj_score = min(areas) / max(areas)
+                if adj_score > best_score:
+                    best_score = adj_score
+                    best_adj = adj
+
+        if best_adj is None:
+            mod = mod * 0.5
+            print(f"Mod is now {mod}")
+        else:
+            print(f"Score {best_score}")
+            weights = best_adj
+
+    print("Best weights")
+    for w in weights:
+        print(format(w, ".20f"))
+
+    print("Result")
+    for p in poly:
+        print(p)
+    better_pattern(poly).make_pattern()
 
 
 def debug_model():
     halves = read_halves("c:/users/sigma/documents/bad_model.bin")
-    better_pattern(brute_faces(halves)).make_pattern()
+    better_pattern(make_polygon(halves)).make_pattern()
 
 
 def topper():
@@ -1151,7 +1571,7 @@ def topper():
         z = math.cos(phi)
         halves.append((x, y, z, -1.0))
         halves.append((-x, -y, z, -1.0))
-    better_pattern(brute_faces(halves)).make_pattern()
+    better_pattern(make_polygon(halves)).make_pattern()
 
 
 NWU = (-1, +1, +1)
@@ -1182,4 +1602,9 @@ def point_image(point):
 
 
 if __name__ == "__main__":
-    debug_model()
+    # plot_faces()
+    # font_stuff()
+
+    r2 = math.sqrt(2.0)
+    r = Rigid((0, 3), (4, 0), (1, 10), (6, 10))
+    print(r.move((2, 1.5)))
