@@ -1755,18 +1755,21 @@ class Font:
         self.pen.curve_to((441.00, 512.00), (558.00, 512.00))
         self.pen.curve_to((134.00, 631.50), (268.00, 512.00))
         self.pen.curve_to((0.00, 976.00), (0.00, 751.00))
-        self.pen.curve_to((134.50, 1353.50), (0.00, 1209.00))
-        self.pen.curve_to((484.00, 1496.00), (269.00, 1496.00))
-        self.pen.close_path()
-        self.pen.move_to((614.00, 778.00))
+        self.pen.line_to((289.00, 1002.00))
+
+        self.pen.curve_to((341.50, 808.50), (289.00, 873.00))
+        self.pen.curve_to((503.00, 744.00), (394.00, 744.00))
+        self.pen.curve_to((614.00, 778.00), (562.00, 744.00))
         self.pen.curve_to((711.00, 993.00), (711.00, 840.00))
         self.pen.curve_to((653.50, 1188.00), (711.00, 1116.00))
         self.pen.curve_to((496.00, 1260.00), (596.00, 1260.00))
         self.pen.curve_to((371.00, 1219.00), (423.00, 1260.00))
         self.pen.curve_to((289.00, 1002.00), (289.00, 1155.00))
-        self.pen.curve_to((341.50, 808.50), (289.00, 873.00))
-        self.pen.curve_to((503.00, 744.00), (394.00, 744.00))
-        self.pen.curve_to((614.00, 778.00), (562.00, 744.00))
+
+        self.pen.line_to((0.00, 976.00)) 
+        self.pen.curve_to((134.50, 1353.50), (0.00, 1209.00))
+        self.pen.curve_to((484.00, 1496.00), (269.00, 1496.00))
+
         self.pen.close_path()
         return (1008.00, 1496.00)
 
