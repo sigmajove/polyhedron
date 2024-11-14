@@ -677,8 +677,8 @@ def find_vertex(this_face, other_face, poly):
 def start_draw():
     rs = cairo.RecordingSurface(cairo.CONTENT_COLOR_ALPHA, None)
     ctx = cairo.Context(rs)
-    ctx.scale(1.0, -1.0)
-    ctx.set_line_width(0.4)
+    ctx.scale(1, -1)
+    ctx.set_line_width(0.05)
     ctx.set_source_rgba(0, 0, 0, 1)
     return (rs, ctx)
 
@@ -808,9 +808,6 @@ class print_faces:
             prev = v
         assert bottom is not None
         assert top is not None
-
-        print("top_length", top_length)
-        print("bot_length", bottom_length)
 
         y_axis = (top - bottom).normalize()
         x_axis = cross_product(y_axis, self.poly[i][2])
@@ -1153,39 +1150,6 @@ def octa():
     plot_pattern(make_polygon(halves))
 
 
-def tweak():
-    with open("points18.json", "r") as file:
-        halves = json.load(file)
-    for h in halves:
-        h.append(-1.0)
-
-    adjust_min = True
-    while True:
-        poly = make_polygon(halves)
-        min_area = None
-        max_area = None
-        for i in range(0, len(poly), 2):
-            vertices = poly[i][0]
-            a = area(vertices)
-            if min_area is None or a < min_area:
-                min_area = a
-                min_index = i
-            if max_area is None or a > max_area:
-                max_area = a
-                max_index = i
-        ratio = 1 + (max_area / min_area - 1.0) / 10
-        if ratio < 1.0000001:
-            better_pattern(poly).make_pattern()
-            break
-        if adjust_min:
-            halves[min_index][3] /= ratio
-            halves[min_index + 1][3] /= ratio
-        else:
-            halves[max_index][3] *= ratio
-            halves[max_index + 1][3] *= ratio
-        adjust_min = not adjust_min
-
-
 def read_halves(filename):
     halves = []
     buffer = []
@@ -1266,9 +1230,50 @@ def two_thirds(oncurve, ctrl):
     return ((oncurve[0] + 2 * ctrl[0]) / 3.0, (oncurve[1] + 2 * ctrl[1]) / 3.0)
 
 
+class AdjustPen:
+    def __init__(self, x_min, y_min):
+        self.x_min = x_min
+        self.y_min = y_min
+
+    def move_to(self, p):
+        x, y = p
+        print(
+            (
+                f"                     "
+                f"self.pen.move_to(({x-self.x_min:.2f}, {y-self.y_min:.2f}))"
+            )
+        )
+
+    def line_to(self, p):
+        x, y = p
+        print(
+            (
+                f"                     "
+                f"self.pen.line_to(({x-self.x_min:.2f}, {y-self.y_min:.2f}))"
+            )
+        )
+
+    def curve_to(self, p1, p2):
+        x1, y1 = p1
+        x2, y2 = p2
+        print(
+            (
+                f"                     "
+                f"self.pen.curve_to(({x1-self.x_min:.2f}, {y1-self.y_min:.2f}), "
+                f"({x2-self.x_min:.2f}, {y2-self.y_min:.2f})) "
+            )
+        )
+
+    def close_path(self):
+        print((f"                     " f"self.pen.close_path()"))
+
+
 class BoundingBoxPen:
-    def __init__(self, scale):
-        self.scale = scale
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.scale = 1.0
         self.min_x = math.inf
         self.max_x = -math.inf
         self.min_y = math.inf
@@ -1276,7 +1281,7 @@ class BoundingBoxPen:
         self.last_p = None
 
     def scale_point(self, p):
-        return (self.scale * p[0], self.scale * p[1])
+        return p
 
     def record(self, p):
         if p[0] > self.max_x:
@@ -1290,12 +1295,21 @@ class BoundingBoxPen:
         self.last_p = p
 
     def moveTo(self, p):
+        self.move_to(p)
+
+    def move_to(self, p):
         self.record(self.scale_point(p))
 
     def lineTo(self, p):
+        self.line_to(p)
+
+    def line_to(self, p):
         self.record(self.scale_point(p))
 
-    def oneCurve(self, p1, p2):
+    def bounds(self):
+        return (self.min_x, self.max_x, self.min_y, self.max_y)
+
+    def curve_to(self, p2, p1):
         # https://www.shadertoy.com/view/lsyfWc
         p0 = self.last_p
         assert p0 is not None
@@ -1341,23 +1355,25 @@ class BoundingBoxPen:
         assert len(args) == 2 or len(args) == 3
         scaled = [self.scale_point(a) for a in args]
         if len(scaled) == 2:
-            self.oneCurve(scaled[0], scaled[1])
+            self.curve_to(scaled[0], scaled[1])
         else:
             implicit = tuple(
                 0.5 * (scaled[0][i] + scaled[1][i]) for i in range(2)
             )
-            self.oneCurve(scaled[0], implicit)
-            self.oneCurve(scaled[1], scaled[2])
+            self.curve_to(scaled[0], implicit)
+            self.curve_to(scaled[1], scaled[2])
 
     def closePath(self):
         pass
 
+    def close_path(self):
+        pass
+
 
 class CairoPen:
-    def __init__(self, rs, ctx, scale):
+    def __init__(self, rs, ctx):
         self.rs = rs
         self.ctx = ctx
-        self.scale = scale
         self.x_offset = 0
 
     def set_trim_x(self, xmin):
@@ -1368,8 +1384,8 @@ class CairoPen:
 
     def scale_point(self, p):
         return (
-            self.scale * p[0] - self.trim_x + self.x_offset,
-            self.scale * p[1],
+            p[0] - self.trim_x + self.x_offset,
+            p[1],
         )
 
     def moveTo(self, p0):
@@ -1400,6 +1416,362 @@ class CairoPen:
         self.ctx.stroke()
 
 
+class RecordingPen:
+    def __init__(self, rs, ctx):
+        self.rs = rs
+        self.ctx = ctx
+
+    def set_trim_x(self, xmin):
+        self.trim_x = xmin
+
+    def scale_point(self, p):
+        return (p[0] - self.trim_x, p[1])
+
+    def moveTo(self, p0):
+        xxx = self.scale_point(p0)
+        self.ctx.move_to(*xxx)
+        print(
+            (
+                f"                         "
+                f"self.pen.move_to(({xxx[0]:.2f}, {xxx[1]:.2f}))"
+            )
+        )
+
+    def lineTo(self, p1):
+        xxx = self.scale_point(p1)
+        self.ctx.line_to(*xxx)
+        print(
+            (
+                f"                         "
+                f"self.pen.line_to(({xxx[0]:.2f}, {xxx[1]:.2f}))"
+            )
+        )
+
+        self.ctx.line_to(*self.scale_point(p1))
+
+    def oneCurve(self, on, off):
+        print(
+            (
+                f"                         "
+                f"self.pen.curve_to(({on[0]:.2f}, {on[1]:.2f}),"
+                f"({off[0]:.2f}, {off[1]:.2f})),"
+            )
+        )
+        ct1 = two_thirds(self.ctx.get_current_point(), off)
+        ct2 = two_thirds(on, off)
+        self.ctx.curve_to(*ct1, *ct2, *on)
+
+    def qCurveTo(self, *args):
+        assert len(args) == 2 or len(args) == 3
+        scaled = [self.scale_point(a) for a in args]
+        if len(scaled) == 2:
+            self.oneCurve(scaled[1], scaled[0])
+        else:
+            implicit = tuple(
+                0.5 * (scaled[0][i] + scaled[1][i]) for i in range(2)
+            )
+            self.oneCurve(implicit, scaled[0])
+            self.oneCurve(scaled[2], scaled[1])
+
+    def closePath(self):
+        print((f"                         " "self.pen.close_path()"))
+
+        self.ctx.close_path()
+        self.ctx.stroke()
+
+
+class Font:
+    def __init__(self, pen):
+        self.pen = pen
+
+    def draw(self, digit):
+        match digit:
+            case 0:
+                self.pen.move_to((500.00, 232.00))
+                self.pen.curve_to((666.50, 364.50), (627.00, 232.00))
+                self.pen.curve_to((706.00, 747.00), (706.00, 497.00))
+                self.pen.curve_to((666.50, 1135.00), (706.00, 1009.00))
+                self.pen.curve_to((500.00, 1261.00), (627.00, 1261.00))
+                self.pen.curve_to((332.00, 1135.00), (373.00, 1261.00))
+                self.pen.curve_to((291.00, 747.00), (291.00, 1009.00))
+                self.pen.curve_to((332.00, 364.50), (291.00, 497.00))
+                self.pen.curve_to((500.00, 232.00), (373.00, 232.00))
+                self.pen.close_path()
+                self.pen.move_to((1000.00, 747.00))
+                self.pen.curve_to((888.50, 194.00), (1000.00, 388.00))
+                self.pen.curve_to((500.00, 0.00), (777.00, 0.00))
+                self.pen.curve_to((111.50, 194.00), (223.00, 0.00))
+                self.pen.curve_to((0.00, 747.00), (0.00, 388.00))
+                self.pen.curve_to((111.50, 1301.00), (0.00, 1106.00))
+                self.pen.curve_to((500.00, 1496.00), (223.00, 1496.00))
+                self.pen.curve_to((888.50, 1301.00), (777.00, 1496.00))
+                self.pen.curve_to((1000.00, 747.00), (1000.00, 1106.00))
+                self.pen.close_path()
+                return (1000.00, 1496.00)
+            case 1:
+                self.pen.move_to((0.00, 1036.00))
+                self.pen.line_to((0.00, 1230.00))
+                self.pen.curve_to((189.00, 1248.00), (135.00, 1236.00))
+                self.pen.curve_to((329.00, 1324.00), (275.00, 1267.00))
+                self.pen.curve_to((385.00, 1428.00), (366.00, 1363.00))
+                self.pen.curve_to((396.00, 1496.00), (396.00, 1467.00))
+                self.pen.line_to((633.00, 1492.00))
+                self.pen.line_to((633.00, 0.00))
+                self.pen.line_to((341.00, 0.00))
+                self.pen.line_to((341.00, 1036.00))
+                self.pen.close_path()
+                return (633.00, 1496.00)
+            case 2:
+                self.pen.move_to((67.00, 321.00))
+                self.pen.curve_to((355.00, 628.00), (128.00, 466.00))
+                self.pen.curve_to((610.00, 830.00), (552.00, 769.00))
+                self.pen.curve_to((699.00, 1038.00), (699.00, 925.00))
+                self.pen.curve_to((648.00, 1191.00), (699.00, 1130.00))
+                self.pen.curve_to((502.00, 1252.00), (597.00, 1252.00))
+                self.pen.curve_to((325.00, 1155.00), (372.00, 1252.00))
+                self.pen.curve_to((293.00, 977.00), (298.00, 1099.00))
+                self.pen.line_to((16.00, 977.00))
+                self.pen.curve_to((83.00, 1276.00), (23.00, 1162.00))
+                self.pen.curve_to((488.00, 1496.00), (197.00, 1496.00))
+                self.pen.curve_to((854.00, 1365.50), (718.00, 1496.00))
+                self.pen.curve_to((990.00, 1028.00), (990.00, 1238.00))
+                self.pen.curve_to((894.00, 742.00), (990.00, 867.00))
+                self.pen.curve_to((687.00, 557.00), (831.00, 659.00))
+                self.pen.line_to((573.00, 476.00))
+                self.pen.curve_to((426.50, 366.00), (466.00, 400.00))
+                self.pen.curve_to((360.00, 251.00), (387.00, 332.00))
+                self.pen.line_to((993.00, 251.00))
+                self.pen.line_to((993.00, 0.00))
+                self.pen.line_to((0.00, 0.00))
+                self.pen.curve_to((67.00, 321.00), (4.00, 192.00))
+                self.pen.close_path()
+                return (993.00, 1496.00)
+            case 3:
+                self.pen.move_to((280.00, 481.00))
+                self.pen.curve_to((308.00, 337.00), (280.00, 394.00))
+                self.pen.curve_to((497.00, 232.00), (360.00, 232.00))
+                self.pen.curve_to((643.50, 289.50), (581.00, 232.00))
+                self.pen.curve_to((706.00, 455.00), (706.00, 347.00))
+                self.pen.curve_to((590.00, 646.00), (706.00, 598.00))
+                self.pen.curve_to((382.00, 673.00), (524.00, 673.00))
+                self.pen.line_to((382.00, 877.00))
+                self.pen.curve_to((576.00, 904.00), (521.00, 879.00))
+                self.pen.curve_to((671.00, 1074.00), (671.00, 946.00))
+                self.pen.curve_to((622.50, 1209.00), (671.00, 1157.00))
+                self.pen.curve_to((486.00, 1261.00), (574.00, 1261.00))
+                self.pen.curve_to((337.50, 1197.00), (385.00, 1261.00))
+                self.pen.curve_to((292.00, 1026.00), (290.00, 1133.00))
+                self.pen.line_to((26.00, 1026.00))
+                self.pen.curve_to((63.00, 1231.00), (30.00, 1134.00))
+                self.pen.curve_to((173.00, 1388.00), (98.00, 1316.00))
+                self.pen.curve_to((306.00, 1466.00), (229.00, 1439.00))
+                self.pen.curve_to((495.00, 1496.00), (383.00, 1496.00))
+                self.pen.curve_to((830.50, 1385.50), (703.00, 1496.00))
+                self.pen.curve_to((958.00, 1097.00), (958.00, 1278.00))
+                self.pen.curve_to((882.00, 881.00), (958.00, 969.00))
+                self.pen.curve_to((782.00, 806.00), (834.00, 826.00))
+                self.pen.curve_to((894.00, 739.00), (821.00, 806.00))
+                self.pen.curve_to((1003.00, 463.00), (1003.00, 638.00))
+                self.pen.curve_to((875.50, 139.50), (1003.00, 279.00))
+                self.pen.curve_to((498.00, 0.00), (748.00, 0.00))
+                self.pen.curve_to((70.00, 201.00), (190.00, 0.00))
+                self.pen.curve_to((0.00, 481.00), (7.00, 308.00))
+                self.pen.close_path()
+                return (1003.00, 1496.00)
+            case 4:
+                y0 = 0
+                y1 = 348
+                y2 = 605
+                y3 = 1200
+                y4 = 1496
+                x0 = 0
+                x1 = 270
+                x2 = 533
+                x3 = 632
+                x4 = 890
+                x5 = 1120
+                self.pen.move_to((x5, y1))
+                self.pen.line_to((x4, y1))
+                self.pen.line_to((x4, y0))
+                self.pen.line_to((x3, y0))
+                self.pen.line_to((x3, y1))
+                self.pen.line_to((x0, y1))
+                self.pen.line_to((x0, y2))
+                self.pen.line_to((x2, y4))
+                self.pen.line_to((x4, y4))
+                self.pen.line_to((x4, y2))
+                self.pen.line_to((x5, y2))
+                self.pen.close_path()
+                self.pen.move_to((x3, y2))
+                self.pen.line_to((x3, y3))
+                self.pen.line_to((x1, y2))
+                self.pen.close_path()
+                return (1017.00, 1496.00)
+            case 5:
+                self.pen.move_to((284.00, 424.00))
+                self.pen.curve_to((349.00, 280.50), (301.00, 331.00))
+                self.pen.curve_to((489.00, 230.00), (397.00, 230.00))
+                self.pen.curve_to((650.50, 304.50), (595.00, 230.00))
+                self.pen.curve_to((706.00, 492.00), (706.00, 379.00))
+                self.pen.curve_to((654.00, 679.50), (706.00, 603.00))
+                self.pen.curve_to((492.00, 756.00), (602.00, 756.00))
+                self.pen.curve_to((402.00, 743.00), (440.00, 756.00))
+                self.pen.curve_to((301.00, 654.00), (335.00, 719.00))
+                self.pen.line_to((45.00, 666.00))
+                self.pen.line_to((147.00, 1496.00))
+                self.pen.line_to((946.00, 1496.00))
+                self.pen.line_to((946.00, 1225.00))
+                self.pen.line_to((353.00, 1225.00))
+                self.pen.line_to((301.00, 908.00))
+                self.pen.curve_to((404.00, 965.00), (367.00, 951.00))
+                self.pen.curve_to((555.00, 988.00), (466.00, 988.00))
+                self.pen.curve_to((869.00, 867.00), (735.00, 988.00))
+                self.pen.curve_to((1003.00, 515.00), (1003.00, 746.00))
+                self.pen.curve_to((874.00, 156.00), (1003.00, 314.00))
+                self.pen.curve_to((488.00, 0.00), (745.00, 0.00))
+                self.pen.curve_to((148.00, 109.00), (281.00, 0.00))
+                self.pen.curve_to((0.00, 424.00), (15.00, 220.00))
+                self.pen.close_path()
+                return (1003.00, 1496.00)
+            case 6:
+                self.pen.move_to((509.00, 230.00))
+                self.pen.curve_to((658.50, 301.50), (604.00, 230.00))
+                self.pen.curve_to((713.00, 487.00), (713.00, 373.00))
+                self.pen.curve_to((651.00, 681.50), (713.00, 614.00))
+                self.pen.curve_to((499.00, 749.00), (589.00, 749.00))
+                self.pen.curve_to((370.00, 705.00), (426.00, 749.00))
+                self.pen.curve_to((286.00, 495.00), (286.00, 640.00))
+                self.pen.curve_to((349.00, 304.00), (286.00, 378.00))
+                self.pen.curve_to((509.00, 230.00), (412.00, 230.00))
+                self.pen.close_path()
+                self.pen.move_to((687.00, 1121.00))
+                self.pen.curve_to((660.00, 1198.00), (687.00, 1156.00))
+                self.pen.curve_to((521.00, 1266.00), (614.00, 1266.00))
+                self.pen.curve_to((323.00, 1110.00), (382.00, 1266.00))
+                self.pen.curve_to((279.00, 856.00), (291.00, 1024.00))
+                self.pen.curve_to((402.00, 948.00), (332.00, 919.00))
+                self.pen.curve_to((562.00, 977.00), (472.00, 977.00))
+                self.pen.curve_to((878.50, 846.00), (755.00, 977.00))
+                self.pen.curve_to((1002.00, 511.00), (1002.00, 715.00))
+                self.pen.curve_to((881.00, 153.00), (1002.00, 308.00))
+                self.pen.curve_to((505.00, 0.00), (760.00, 0.00))
+                self.pen.curve_to((101.00, 227.00), (231.00, 0.00))
+                self.pen.curve_to((0.00, 689.00), (0.00, 406.00))
+                self.pen.curve_to((14.00, 959.00), (0.00, 855.00))
+                self.pen.curve_to((111.00, 1267.00), (39.00, 1144.00))
+                self.pen.curve_to((273.50, 1436.00), (173.00, 1372.00))
+                self.pen.curve_to((514.00, 1496.00), (374.00, 1496.00))
+                self.pen.curve_to((836.00, 1396.50), (716.00, 1496.00))
+                self.pen.curve_to((971.00, 1121.00), (956.00, 1293.00))
+                self.pen.close_path()
+                return (1002.00, 1496.00)
+            case 7:
+                self.pen.move_to((1028.00, 1244.00))
+                self.pen.curve_to((850.00, 1019.50), (964.00, 1181.00))
+                self.pen.curve_to((659.00, 686.00), (736.00, 858.00))
+                self.pen.curve_to((549.00, 356.00), (598.00, 551.00))
+                self.pen.curve_to((500.00, 0.00), (500.00, 161.00))
+                self.pen.line_to((204.00, 0.00))
+                self.pen.curve_to((460.00, 847.00), (217.00, 426.00))
+                self.pen.curve_to((680.00, 1246.00), (617.00, 1108.00))
+                self.pen.line_to((0.00, 1246.00))
+                self.pen.line_to((4.00, 1496.00))
+                self.pen.line_to((1028.00, 1496.00))
+                self.pen.close_path()
+                return (1028.00, 1496.00)
+            case 8:
+                self.pen.move_to((505.00, 232.00))
+                self.pen.curve_to((658.50, 291.00), (603.00, 232.00))
+                self.pen.curve_to((714.00, 457.00), (714.00, 350.00))
+                self.pen.curve_to((657.50, 625.50), (714.00, 568.00))
+                self.pen.curve_to((505.00, 683.00), (601.00, 683.00))
+                self.pen.curve_to((352.50, 625.50), (409.00, 683.00))
+                self.pen.curve_to((296.00, 457.00), (296.00, 568.00))
+                self.pen.curve_to((351.50, 291.00), (296.00, 350.00))
+                self.pen.curve_to((505.00, 232.00), (407.00, 232.00))
+                self.pen.close_path()
+                self.pen.move_to((218.00, 808.00))
+                self.pen.curve_to((81.50, 959.50), (113.00, 878.00))
+                self.pen.curve_to((50.00, 1112.00), (50.00, 1041.00))
+                self.pen.curve_to((169.00, 1381.50), (50.00, 1270.00))
+                self.pen.curve_to((505.00, 1496.00), (288.00, 1496.00))
+                self.pen.curve_to((841.00, 1381.50), (722.00, 1496.00))
+                self.pen.curve_to((960.00, 1112.00), (960.00, 1270.00))
+                self.pen.curve_to((928.50, 959.50), (960.00, 1041.00))
+                self.pen.curve_to((792.00, 818.00), (897.00, 878.00))
+                self.pen.curve_to((953.00, 659.00), (899.00, 758.00))
+                self.pen.curve_to((1007.00, 438.00), (1007.00, 560.00))
+                self.pen.curve_to((871.50, 126.50), (1007.00, 255.00))
+                self.pen.curve_to((493.00, 0.00), (736.00, 0.00))
+                self.pen.curve_to((125.00, 126.50), (250.00, 0.00))
+                self.pen.curve_to((0.00, 438.00), (0.00, 255.00))
+                self.pen.curve_to((55.50, 659.00), (0.00, 560.00))
+                self.pen.curve_to((218.00, 808.00), (111.00, 758.00))
+                self.pen.close_path()
+                self.pen.move_to((505.00, 901.00))
+                self.pen.curve_to((639.50, 951.00), (592.00, 901.00))
+                self.pen.curve_to((687.00, 1080.00), (687.00, 1001.00))
+                self.pen.curve_to((639.50, 1214.50), (687.00, 1166.00))
+                self.pen.curve_to((505.00, 1263.00), (592.00, 1263.00))
+                self.pen.curve_to((370.50, 1214.50), (419.00, 1263.00))
+                self.pen.curve_to((322.00, 1080.00), (322.00, 1166.00))
+                self.pen.curve_to((370.50, 951.00), (322.00, 1001.00))
+                self.pen.curve_to((505.00, 901.00), (419.00, 901.00))
+                self.pen.close_path()
+                return (1007.00, 1496.00)
+            case 9:
+                self.pen.move_to((484.00, 1496.00))
+                self.pen.curve_to((938.00, 1205.00), (815.00, 1496.00))
+                self.pen.curve_to((1008.00, 768.00), (1008.00, 1039.00))
+                self.pen.curve_to((941.00, 329.00), (1008.00, 505.00))
+                self.pen.curve_to((471.00, 0.00), (813.00, 0.00))
+                self.pen.curve_to((178.00, 90.50), (308.00, 0.00))
+                self.pen.curve_to((29.00, 372.00), (48.00, 187.00))
+                self.pen.line_to((313.00, 372.00))
+                self.pen.curve_to((367.00, 268.00), (323.00, 308.00))
+                self.pen.curve_to((484.00, 228.00), (411.00, 228.00))
+                self.pen.curve_to((682.00, 384.00), (625.00, 228.00))
+                self.pen.curve_to((721.00, 635.00), (713.00, 470.00))
+                self.pen.curve_to((638.00, 560.00), (682.00, 586.00))
+                self.pen.curve_to((441.00, 512.00), (558.00, 512.00))
+                self.pen.curve_to((134.00, 631.50), (268.00, 512.00))
+                self.pen.curve_to((0.00, 976.00), (0.00, 751.00))
+                self.pen.curve_to((134.50, 1353.50), (0.00, 1209.00))
+                self.pen.curve_to((484.00, 1496.00), (269.00, 1496.00))
+                self.pen.close_path()
+                self.pen.move_to((614.00, 778.00))
+                self.pen.curve_to((711.00, 993.00), (711.00, 840.00))
+                self.pen.curve_to((653.50, 1188.00), (711.00, 1116.00))
+                self.pen.curve_to((496.00, 1260.00), (596.00, 1260.00))
+                self.pen.curve_to((371.00, 1219.00), (423.00, 1260.00))
+                self.pen.curve_to((289.00, 1002.00), (289.00, 1155.00))
+                self.pen.curve_to((341.50, 808.50), (289.00, 873.00))
+                self.pen.curve_to((503.00, 744.00), (394.00, 744.00))
+                self.pen.curve_to((614.00, 778.00), (562.00, 744.00))
+                self.pen.close_path()
+                return (1008.00, 1496.00)
+            case _:
+                raise RuntimeError(f"(Bad digit {digit}")
+
+
+def measure_font():
+    b = BoundingBoxPen()
+    f = Font(b)
+    for i in range(10):
+        print(f"            case {i}:")
+        b.reset()
+        f.draw(i)
+        x_min, x_max, y_min, y_max = b.bounds()
+        a = Font(AdjustPen(x_min, y_min))
+        a.draw(i)
+        print(
+            (
+                "                     return "
+                f"({x_max-x_min:.2f}, {y_max-y_min:.2f})"
+            )
+        )
+
+
 def font_stuff():
     font = TTFont(
         "c:/Users/sigma/AppData/Local/Microsoft/Windows\
@@ -1407,46 +1779,141 @@ def font_stuff():
     )
 
     rs, ctx = start_draw()
-    cairo_pen = CairoPen(rs, ctx, scale=0.1)
+    cairo_pen = RecordingPen(rs, ctx)
 
     glyphSet = font.getGlyphSet()
-    for s in (
-        "zero",
-        "one",
-        "two",
-        "three",
-        "four",
-        "five",
-        "six",
-        "seven",
-        "eight",
-        "nine",
+    for i, s in enumerate(
+        (
+            "zero",
+            "one",
+            "two",
+            "three",
+            "four",
+            "five",
+            "six",
+            "seven",
+            "eight",
+            "nine",
+        )
     ):
+        print("            case", i, ":")
         glyph = glyphSet[s]
-        bounding_pen = BoundingBoxPen(scale=0.1)
+        bounding_pen = BoundingBoxPen()
         glyph.draw(bounding_pen)
-        print("y bounds", bounding_pen.min_y, bounding_pen.max_y)
+        # print("y bounds", bounding_pen.min_y, bounding_pen.max_y)
         cairo_pen.set_trim_x(bounding_pen.min_x)
         glyph.draw(cairo_pen)
         x_width = bounding_pen.max_x - bounding_pen.min_x
-        cairo_pen.advance_x(x_width + 150 * cairo_pen.scale)
+        # cairo_pen.advance_x(x_width + 150)
 
     finish_draw(rs, ctx, "font")
 
 
+class SketchPen:
+    def __init__(self, ctx):
+        self.ctx = ctx
+        self.x_offset = 0
+
+    def advance_x(self, dx):
+        self.x_offset += dx
+
+    def adjust(self, p):
+        return (p[0] + self.x_offset, p[1])
+
+    def move_to(self, p0):
+        self.ctx.move_to(*self.adjust(p0))
+
+    def line_to(self, p1):
+        self.ctx.line_to(*self.adjust(p1))
+
+    def curve_to(self, on, off):
+        on_adj = self.adjust(on)
+        off_adj = self.adjust(off)
+        ct1 = two_thirds(self.ctx.get_current_point(), off_adj)
+        ct2 = two_thirds(on_adj, off_adj)
+        self.ctx.curve_to(*ct1, *ct2, *on_adj)
+
+    def close_path(self):
+        self.ctx.close_path()
+        self.ctx.stroke()
+
+
+class WidthPen:
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.max_x = -math.inf
+        self.min_x = math.inf
+        self.max_y = -math.inf
+        self.min_y = math.inf
+
+    def bounds(self):
+        print(
+            (
+                f"min_x={self.min_x:.2f} "
+                f"max_x={self.max_x:.2f} "
+                f"min_y={self.min_y:.2f} "
+                f"max_y={self.max_y:.2f}"
+            )
+        )
+        return (self.min_x, self.max_x)
+
+    def check_x(self, p):
+        x, y = p
+        if x > self.max_x:
+            self.max_x = x
+        if x < self.min_x:
+            self.min_x = x
+        if y > self.max_y:
+            self.max_y = y
+        if y < self.min_y:
+            self.min_y = y
+
+    def move_to(self, p0):
+        self.check_x(p0)
+
+    def line_to(self, p1):
+        self.check_x(p1)
+
+    def curve_to(self, on, off):
+        self.check_x(on)
+
+    def close_path(self):
+        pass
+
+
+def draw_font():
+    rs, ctx = start_draw()
+    s = SketchPen(ctx)
+    f = Font(s)
+    for i in range(10):
+        f.draw(i)
+        wp = WidthPen()
+        w = Font(wp)
+        w.draw(i)
+        s.advance_x(wp.bounds()[1])
+
+    finish_draw(rs, ctx, "sketch")
+
+
+# These weights define a polyhedron whose faces have equal area
+# within a tenth of a percent.
+WEIGHTS = [
+    0987.57259746581451054226,
+    1035.38120169441140205890,
+    0954.69453935047556569771,
+    1036.79718497324597592524,
+    0985.34222651605227838445,
+    1019.27739583333345763094,
+    0981.56770833333337122895,
+    0988.71962500000006457412,
+    1013.32433333333335667703,
+]
+
+
 def plot_faces():
-    weights = [
-        0987.57259746581451054226,
-        1035.38120169441140205890,
-        0954.69453935047556569771,
-        1036.79718497324597592524,
-        0985.34222651605227838445,
-        1019.27739583333345763094,
-        0981.56770833333337122895,
-        0988.71962500000006457412,
-        1013.32433333333335667703,
-    ]
-    poly = iteration(weights)
+    poly = iteration(WEIGHTS)
     p = print_faces(poly)
     p.poles([0, 2, 4, 6, 8])
     p.poles([1, 3, 5, 7, 9])
@@ -1455,18 +1922,39 @@ def plot_faces():
     p.finish()
 
 
+def test_rigid():
+    x = Rigid((0, 3), (10, 3), (4, 0), (15, 3))
+    assert x.move((0, 3)) == (10, 3)
+    assert x.move((4, 0)) == (15, 3)
+    assert x.move((2, 1.5)) == (12.5, 3)
+
+
 class Rigid:
     # Define a rigid transformation that maps
     # from0 to to0 and from1 to to1
-    # The distance from from0 to to0 must equal
-    # the distance from from1 to to1
+    # The distance from from0 to from1 must equal
+    # the distance from to0 to to1
     def __init__(self, from0, to0, from1, to1):
-        self.origin = from0
-        self.dx = from1[0] - from0[0]
-        self.dy = from1[1] - from0[1]
+        df = distance(from0, from1)
+        dt = distance(to0, to1)
+        if not math.isclose(
+            df,
+            dt,
+            rel_tol=REL_TOL,
+            abs_tol=ABS_TOL,
+        ):
+            print("Fail df", df, "dt", dt)
+            assert False
 
-        v0 = self.normvec(to0, from0)
-        v1 = self.normvec(to1, from1)
+        self.origin = from0
+        self.dx = to0[0] - from0[0]
+        self.dy = to0[1] - from0[1]
+
+        v0 = self.normvec(from1, from0)
+        v1 = self.normvec(to1, to0)
+
+        # Compute the cos and sin of the angle between the two
+        # vectors using the dot product and cross product.
         self.cos_t = v0[0] * v1[0] + v0[1] * v1[1]
         self.sin_t = v0[0] * v1[1] - v0[1] * v1[0]
 
@@ -1485,6 +1973,7 @@ class Rigid:
         r = math.sqrt(v0 * v0 + v1 * v1)
 
         if r < EPSILON:
+            # Alternatively, we could use from1 as the origin.
             return (p[0] + self.dx, p[1] + self.dy)
 
         cos_u = v0 / r
@@ -1497,6 +1986,221 @@ class Rigid:
             self.origin[0] + r * cos_x + self.dx,
             self.origin[1] + r * sin_x + self.dy,
         )
+
+
+def print_edges(faces, filename):
+    rs, ctx = start_draw()
+
+    edges = []
+    for f in faces:
+        if f is not None:
+            prev = f[-1]
+            for v in f:
+                edges.append((prev, v))
+                prev = v
+
+    while edges:
+        e = edges.pop(0)
+        ctx.move_to(*e[0])
+        v = e[1]
+        while True:
+            ctx.line_to(*v)
+            found = False
+            for i, e in enumerate(edges):
+                if e[0] == v:
+                    v = e[1]
+                    found = True
+                    break
+                if e[1] == v:
+                    v = e[0]
+                    found = True
+                    break
+            if found:
+                edges.pop(i)
+            else:
+                ctx.stroke()
+                break
+    finish_draw(rs, ctx, "pattern")
+
+
+class CustomPattern:
+    def __init__(self):
+        self.poly = iteration(WEIGHTS)
+        self.flattened = [None] * len(self.poly)
+        self.moved = [None] * len(self.poly)
+
+        # Compute all the flattened faces.
+        self.poles([0, 2, 4, 6, 8])
+        self.poles([1, 3, 5, 7, 9])
+        for i in (10, 12, 14, 16, 11, 13, 15, 17):
+            self.barrel(i)
+        for f in self.flattened:
+            assert f is not None
+
+    def poles(self, faces):
+        v = self.find_vertex(faces)
+        for f in faces:
+            self.rotate_pole(f, v)
+
+    def barrel(self, i):
+        vertices = self.poly[i][0]
+        prev = vertices[-1]
+        top = None
+        bottom = None
+        for v in vertices:
+            if prev.z > 0 and v.z < 0:
+                assert top is None
+                top = copy.deepcopy(v)
+                top_length = (v - prev).magnitude()
+                top.z = 0.0
+
+            if prev.z < 0 and v.z > 0:
+                assert bottom is None
+                bottom = copy.deepcopy(v)
+                bottom_length = (v - prev).magnitude()
+                bottom.z = 0.0
+            prev = v
+        assert bottom is not None
+        assert top is not None
+
+        y_axis = (top - bottom).normalize()
+        x_axis = cross_product(y_axis, self.poly[i][2])
+
+        flat = []
+        min_y = math.inf
+        max_y = -math.inf
+        for vx in vertices:
+            x = dot_product(x_axis.value(), vx.value())
+            y = dot_product(y_axis.value(), vx.value())
+            if y < min_y:
+                min_y = y
+            if y > max_y:
+                max_y = y
+            flat.append([x, y])
+
+        self.flattened[i] = flat
+
+    def find_vertex(self, faces):
+        result = None
+        for f in faces:
+            vertices = self.poly[f][0]
+            v_set = set(v for v in vertices)
+            if result is None:
+                result = v_set
+            else:
+                result = result.intersection(v_set)
+        assert len(result) == 1
+        return next(iter(result))
+
+    def rotate_pole(self, i, v):
+        vertices = self.poly[i][0]
+        apex = vertices.index(v)
+        prev = vertices[(apex - 1) % len(vertices)]
+        next = vertices[(apex + 1) % len(vertices)]
+        vx0 = Vertex(*prev.value())
+        vx1 = Vertex(*v.value())
+        vx2 = Vertex(*next.value())
+
+        y_axis = (
+            ((vx1 - vx0).normalize() + (vx1 - vx2).normalize())
+            .scale(0.5)
+            .normalize()
+        )
+
+        x_axis = cross_product(y_axis, self.poly[i][2])
+        flat = []
+        min_y = math.inf
+        max_y = -math.inf
+        for vx in vertices:
+            x = dot_product(x_axis.value(), vx.value())
+            y = dot_product(y_axis.value(), vx.value())
+            if y < min_y:
+                min_y = y
+            if y > max_y:
+                max_y = y
+            flat.append([x, y])
+
+        # Translate so the coordinate of the apex is (0, 0)
+        align = flat[apex][0]
+        for f in flat:
+            f[0] -= align
+            f[1] -= max_y
+
+        self.flattened[i] = flat
+
+    # src and dst are face numbers that have an edge in common.
+    # moved[src] has been already been computed.
+    # Compute moved[dst]
+    def attach(self, src, dst):
+        if self.moved[src] is not None:
+            return
+        print(f"Attach src={src} to dst={dst}")
+        # Find the common edge.
+        src_edge = self.poly[src][1].index(dst)
+        src_vtx = self.flattened[src]
+        src_p0 = src_vtx[src_edge]
+        src_p1 = src_vtx[(src_edge + 1) % len(src_vtx)]
+
+        dst_edge = self.poly[dst][1].index(src)
+
+        dst_vtx = self.moved[dst]
+
+        dst_p0 = dst_vtx[(dst_edge + 1) % len(dst_vtx)]
+        dst_p1 = dst_vtx[dst_edge]
+
+        translate = Rigid(src_p0, dst_p0, src_p1, dst_p1)
+        moved = []
+        for p in src_vtx:
+            if p == src_p0:
+                m = dst_p0
+            elif p == src_p1:
+                m = dst_p1
+            else:
+                m = translate.move(p)
+            moved.append(m)
+        self.moved[src] = moved
+
+    def main(self):
+        for i in range(len(self.poly)):
+            print(f"{i}: {', '.join(str(f) for f in self.poly[i][1])}")
+        for i in range(len(self.poly)):
+            v = self.poly[i][0]
+            z = self.flattened[i]
+            assert len(v) == len(z)
+            for j in range(len(v)):
+                prev = (j - 1) % len(v)
+                dv = distance(v[prev].value(), v[j].value())
+                dz = distance(z[prev], z[j])
+                if not math.isclose(dv, dz):
+                    print("Distance error", dv, dz)
+                    assert False
+
+        x = [1, 3, 5, 7, 9]
+        self.moved[x[0]] = copy.deepcopy(self.flattened[x[0]])
+        for i in range(1, len(x)):
+            self.attach(x[i], x[i - 1])
+        self.attach(9, 1)
+        self.attach(11, 1)
+        self.attach(13, 1)
+        self.attach(15, 3)
+        self.attach(17, 5)
+        self.attach(4, 11)
+        self.attach(6, 4)
+        self.attach(8, 6)
+        self.attach(0, 8)
+        self.attach(2, 0)
+        self.attach(10, 0)
+        self.attach(12, 0)
+        self.attach(14, 2)
+        self.attach(16, 2)
+
+        if False:
+            self.attach(10, 0)
+            self.attach(12, 0)
+            self.attach(14, 2)
+            self.attach(15, 3)
+            self.attach(16, 2)
+        print_edges(self.moved, "custom")
 
 
 def custom():
@@ -1604,7 +2308,6 @@ def point_image(point):
 if __name__ == "__main__":
     # plot_faces()
     # font_stuff()
-
-    r2 = math.sqrt(2.0)
-    r = Rigid((0, 3), (4, 0), (1, 10), (6, 10))
-    print(r.move((2, 1.5)))
+    # CustomPattern().main()
+    draw_font()
+    # measure_font()
