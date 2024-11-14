@@ -1486,17 +1486,17 @@ class Font:
         self.pen = pen
 
     def d0(self):
-        self.pen.move_to((500.00, 232.00))
-        self.pen.curve_to((666.50, 364.50), (627.00, 232.00))
-        self.pen.curve_to((706.00, 747.00), (706.00, 497.00))
+        self.pen.move_to((706.00, 747.00))
         self.pen.curve_to((666.50, 1135.00), (706.00, 1009.00))
         self.pen.curve_to((500.00, 1261.00), (627.00, 1261.00))
         self.pen.curve_to((332.00, 1135.00), (373.00, 1261.00))
         self.pen.curve_to((291.00, 747.00), (291.00, 1009.00))
         self.pen.curve_to((332.00, 364.50), (291.00, 497.00))
         self.pen.curve_to((500.00, 232.00), (373.00, 232.00))
-        self.pen.close_path()
-        self.pen.move_to((1000.00, 747.00))
+        self.pen.curve_to((666.50, 364.50), (627.00, 232.00))
+        self.pen.curve_to((706.00, 747.00), (706.00, 497.00))
+        # self.pen.close_path()
+        self.pen.line_to((1000.00, 747.00))
         self.pen.curve_to((888.50, 194.00), (1000.00, 388.00))
         self.pen.curve_to((500.00, 0.00), (777.00, 0.00))
         self.pen.curve_to((111.50, 194.00), (223.00, 0.00))
@@ -1593,21 +1593,25 @@ class Font:
         x3 = 632
         x4 = 890
         x5 = 1120
-        self.pen.move_to((x5, y1))
-        self.pen.line_to((x4, y1))
-        self.pen.line_to((x4, y0))
-        self.pen.line_to((x3, y0))
-        self.pen.line_to((x3, y1))
+        self.pen.move_to((x3, y1))
+
         self.pen.line_to((x0, y1))
         self.pen.line_to((x0, y2))
         self.pen.line_to((x2, y4))
         self.pen.line_to((x4, y4))
         self.pen.line_to((x4, y2))
         self.pen.line_to((x5, y2))
-        self.pen.close_path()
-        self.pen.move_to((x3, y2))
+        self.pen.line_to((x5, y1))
+        self.pen.line_to((x4, y1))
+        self.pen.line_to((x4, y0))
+        self.pen.line_to((x3, y0))
+        self.pen.line_to((x3, y1))
+
+        self.pen.line_to((x3, y2))
         self.pen.line_to((x3, y3))
         self.pen.line_to((x1, y2))
+        self.pen.line_to((x3, y2))
+
         self.pen.close_path()
         return (1120.00, 1496.00)
 
@@ -1930,7 +1934,7 @@ class SketchPen:
 
     def close_path(self):
         self.ctx.close_path()
-        self.ctx.stroke()
+        self.ctx.fill()
 
 
 class WidthPen:
