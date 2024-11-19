@@ -1185,6 +1185,7 @@ def main():
 
 
 def attempt(phi, weights):
+    global last_coords
     coords = []
     total = float(sum(weights[:5]))
     for i in range(5):
@@ -1197,6 +1198,7 @@ def attempt(phi, weights):
         angle = math.pi * sum(weights[5 : i + 1]) / total
         coords.append((angle, equator))
 
+    last_coords = coords
     # Convert to Cartesian
     halves = []
     for theta, phi in coords:
@@ -1207,8 +1209,7 @@ def attempt(phi, weights):
         halves.append((x, y, z, -1.0))
         halves.append((-x, -y, -z, -1.0))
 
-    poly = make_polygon(halves)
-    return poly
+    return make_polygon(halves)
 
 
 def iteration(weights):
@@ -2126,7 +2127,7 @@ def print_edges(faces, filename):
             else:
                 ctx.stroke()
                 break
-    finish_draw(rs, ctx, "pattern")
+    finish_draw(rs, ctx, filename)
 
 
 class CustomPattern:
@@ -2134,6 +2135,9 @@ class CustomPattern:
         self.poly = iteration(WEIGHTS)
         self.flattened = [None] * len(self.poly)
         self.moved = [None] * len(self.poly)
+        print ("last_coords")
+        for p in last_coords:
+            print(p)
 
         # Compute all the flattened faces.
         self.poles([0, 2, 4, 6, 8])
@@ -2306,7 +2310,7 @@ class CustomPattern:
             self.attach(14, 2)
             self.attach(15, 3)
             self.attach(16, 2)
-        print_edges(self.moved, "custom")
+        print_edges(self.moved, "pattern")
 
 
 def custom():
@@ -2414,6 +2418,6 @@ def point_image(point):
 if __name__ == "__main__":
     # plot_faces()
     # font_stuff()
-    # CustomPattern().main()
-    draw_font()
+    CustomPattern().main()
+    # draw_font()
     # measure_font()
