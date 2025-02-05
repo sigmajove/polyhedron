@@ -1,15 +1,15 @@
 import math
 import cairo
 
-# Given polygon defined by (x, y) verticies in order
+# Given polygon defined by a list of (x, y) vertices in order
 # (clockwise or counterclockwise), and a point (x, y), determines whether
 # that point is in the interior of the polygon.
 # Uses the algorithm described in
 # https://en.wikipedia.org/wiki/Point_in_polygon#Ray_casting_algorithm
 # The basic idea is to extend a ray infinitely to the right point, and
-# count how many times it crosses the boundary. If it crosses an odd number,
-# the point is on the interior, and if it crosses an even number of times
-# the point is on the exterior.
+# count how many times it crosses the boundary. If it crosses an odd number
+# of times, the point is on the interior, and if it crosses an even number
+# of times the point is on the exterior.
 
 # The are, however, some corner cases to be considered. For example, if the
 # point is anywhere on the boundary, we return False.
@@ -23,8 +23,15 @@ def inside(point, sides):
     prev = sides[-1]
     cross_count = 0
     for here in sides:
-        # Horizontal edges are ignored, since there is no unique point
-        # that intersects with the ray.
+        # (Almost) horizontal edges are ignored, since there is no computable
+        # point that intersects with the ray.
+        if math.isclose(here[1], prev[1]):
+            if math.isclose(point[1], 0.5 * (here[1] + prev[1])) and (
+                here[0] <= point[0] <= prev[0] or here[0] >= point[0] >= prev[0]
+            ):
+                # The point is close to the (almost) horizontal edge
+                return False
+            keep = False
         # If the ray intersects with a vertex, we have to worry about the
         # possibility of couting the crossing twice, the two edges that
         # share that vertex. The trick is to only count as a crossing the
@@ -32,17 +39,10 @@ def inside(point, sides):
         # that is zero crossings. If the ray crosses a valley, that is two
         # crossings, but if ray crosses an incline or decline, that will be
         # correctly counted as a single crossing.
-        if here[1] < prev[1]:
+        elif here[1] < prev[1]:
             keep = here[1] <= point[1] < prev[1]
-        elif here[1] > prev[1]:
-            keep = here[1] > point[1] >= prev[1]
         else:
-            if point[1] == here[1] and (
-                here[0] <= point[0] <= prev[0] or here[0] >= point[0] >= prev[0]
-            ):
-                # The point is on the horizontal edge
-                return False
-            keep = False
+            keep = here[1] > point[1] >= prev[1]
 
         if keep:
             # The x-coordinate where the ray intersects the edge.
