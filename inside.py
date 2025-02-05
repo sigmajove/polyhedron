@@ -1,35 +1,57 @@
 import math
 import cairo
 
+# Given polygon defined by (x, y) verticies in order
+# (clockwise or counterclockwise), and a point (x, y), determines whether
+# that point is in the interior of the polygon.
+# Uses the algorithm described in
+# https://en.wikipedia.org/wiki/Point_in_polygon#Ray_casting_algorithm
+# The basic idea is to extend a ray infinitely to the right point, and
+# count how many times it crosses the boundary. If it crosses an odd number,
+# the point is on the interior, and if it crosses an even number of times
+# the point is on the exterior.
+
+# The are, however, some corner cases to be considered. For example, if the
+# point is anywhere on the boundary, we return False.
+# See also https://www.scribd.com/document/56214673/Ray-Casting-Algorithm
+
 
 def inside(point, sides):
     if len(sides) <= 2:
+        # At best, a degenerate polygon that can contain no points.
         return False
     prev = sides[-1]
     cross_count = 0
     for here in sides:
-        # If the edge is nearly horizontal, we can't determine the
-        # the intersection between the ray and the edge.
-        # We have to special case the check if the point is on the edge.
-        if (
-            math.isclose(here[1], point[1])
-            and math.isclose(prev[1], point[1])
-            and (
+        # Horizontal edges are ignored, since there is no unique point
+        # that intersects with the ray.
+        # If the ray intersects with a vertex, we have to worry about the
+        # possibility of couting the crossing twice, the two edges that
+        # share that vertex. The trick is to only count as a crossing the
+        # intersection of the lower vertex. If the ray crosses a peak,
+        # that is zero crossings. If the ray crosses a valley, that is two
+        # crossings, but if ray crosses an incline or decline, that will be
+        # correctly counted as a single crossing.
+        if here[1] < prev[1]:
+            keep = here[1] <= point[1] < prev[1]
+        elif here[1] > prev[1]:
+            keep = here[1] > point[1] >= prev[1]
+        else:
+            if point[1] == here[1] and (
                 here[0] <= point[0] <= prev[0] or here[0] >= point[0] >= prev[0]
-            )
-        ):
-            return False
+            ):
+                # The point is on the horizontal edge
+                return False
+            keep = False
 
-        # Determine whether the ray from point to the right intersects with
-        # the edge.  First check whether the y coordinate is in range.
-        if prev[1] < point[1] < here[1] or prev[1] > point[1] > here[1]:
-            # x is the coordinate where the ray interesects the edge.
+        if keep:
+            # The x-coordinate where the ray intersects the edge.
             x = here[0] + (point[1] - here[1]) * (here[0] - prev[0]) / (
                 here[1] - prev[1]
             )
-            if math.isclose(x, point[0]):
-                # point is very close to an edge.
-                # Declare it not to be in the polygon
+
+            if math.isclose(point[0], x):
+                # The point is very near the edge.
                 return False
 
             if point[0] < x:
@@ -38,19 +60,6 @@ def inside(point, sides):
 
         prev = here
 
-    # Look for crossings that happen at a vertex
-    a = sides[-2]
-    b = sides[-1]
-    for c in sides:
-        if math.isclose(point[0], c[0]) and math.isclose(point[1], c[1]):
-            # point is very close to a vertex.
-            # Declare it not to be in the polygon
-            return False
-        if point[1] == b[1] and point[0] < b[0]:
-            if (a[1] < b[1] and c[1] > b[1]) or (a[1] > b[1] and c[1] < b[1]):
-                cross_count += 1
-        a = b
-        b = c
     return cross_count % 2 == 1
 
 
@@ -161,10 +170,6 @@ def another_test():
         (8, 2),
         (8, 3),
     }
-
-
-shape_test()
-another_test()
 
 
 def start_draw():
@@ -301,41 +306,41 @@ def run_tests():
 
 
 shape = [
-    (-8, 0),
-    (-6, 0),
-    (-6, -3),
-    (-3, -5),
-    (5, -3),
-    (5, 0),
-    (2, 4),
-    (-3, 4),
-    (-3, -2),
-    (-1, -2),
-    (-1, -1),
-    (-2, -1),
-    (-2, 1),
-    (-1, 1),
-    (-1, 2),
-    (0, 2),
-    (0, 1),
-    (2, 1),
-    (3, 0),
-    (3, -1),
-    (4, -1),
-    (4, -3),
-    (2, -3),
-    (2, 0),
-    (0, 0),
-    (1, -2),
-    (1, -3),
-    (-4, -3),
-    (-5, -2),
-    (-5, 5),
-    (3, 5),
-    (7, 1),
-    (7, -7),
-    (-3, -7),
-    (-8, -3),
+    (-12.0, 0.0),
+    (-9.0, 0.0),
+    (-9.0, -4.5),
+    (-4.5, -7.5),
+    (7.5, -4.5),
+    (7.5, 0.0),
+    (3.0, 6.0),
+    (-4.5, 6.0),
+    (-4.5, -3.0),
+    (-1.5, -3.0),
+    (-1.5, -1.5),
+    (-3.0, -1.5),
+    (-3.0, 1.5),
+    (-1.5, 1.5),
+    (-1.5, 3.0),
+    (0.0, 3.0),
+    (0.0, 1.5),
+    (3.0, 1.5),
+    (4.5, 0.0),
+    (4.5, -1.5),
+    (6.0, -1.5),
+    (6.0, -4.5),
+    (3.0, -4.5),
+    (3.0, 0.0),
+    (0.0, 0.0),
+    (1.5, -3.0),
+    (1.5, -4.5),
+    (-6.0, -4.5),
+    (-7.5, -3.0),
+    (-7.5, 7.5),
+    (4.5, 7.5),
+    (10.5, 1.5),
+    (10.5, -10.5),
+    (-4.5, -10.5),
+    (-12.0, -4.5),
 ]
 
-print(inside((0, -1), shape))
+inside_test(shape)
