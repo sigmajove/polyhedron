@@ -24,7 +24,7 @@ def inside(point, sides):
     for here in sides:
         # (Almost) horizontal edges are ignored, since there is no computable
         # point that intersects with the horizontal ray. We declare the ray
-        # cannot cross these edges.
+        # cannot cross a nearly horizontal edge.
         if math.isclose(here[1], prev[1]):
             if math.isclose(point[1], 0.5 * (here[1] + prev[1])) and (
                 here[0] <= point[0] <= prev[0] or here[0] >= point[0] >= prev[0]
