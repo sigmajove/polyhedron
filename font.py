@@ -34,12 +34,6 @@ class Font:
         self.pen.close_path()
         return (1000.00, 1496.00)
 
-    def add_extras(self, p0, p1, n):
-        dx = p1[0] - p0[0]
-        dy = p1[1] - p0[1]
-        for i in range (1, n):
-            self.pen.add_steiner((p0[0] + (i * dx) / n, p0[1] + (i * dy) / n))
-
     def d1(self):
         self.pen.move_to((0.00, 1036.00))
         self.pen.line_to((0.00, 1230.00))
@@ -47,8 +41,6 @@ class Font:
         self.pen.curve_to((329.00, 1324.00), (275.00, 1267.00))
         self.pen.curve_to((385.00, 1428.00), (366.00, 1363.00))
         self.pen.curve_to((396.00, 1496.00), (396.00, 1467.00))
-        # self.add_extras((0.00, 1230.00), (396.0, 1496.0), 5)
-        # self.add_extras((0.00, 1230.00+300), (396.0, 1496.0+300), 4)
         self.pen.line_to((633.00, 1492.00))
         self.pen.line_to((633.00, 0.00))
         self.pen.line_to((341.00, 0.00))
@@ -141,7 +133,6 @@ class Font:
         self.pen.line_to((x3, y0))
         self.pen.close_path()
 
-        # self.pen.move_to((x3, y1))
         self.pen.move_to((x3, y2))
         self.pen.line_to((x3, y3))
         self.pen.line_to((x1, y2))
@@ -287,8 +278,11 @@ class Font:
         self.pen.curve_to((441.00, 512.00), (558.00, 512.00))
         self.pen.curve_to((134.00, 631.50), (268.00, 512.00))
         self.pen.curve_to((0.00, 976.00), (0.00, 751.00))
-        self.pen.line_to((289.00, 1002.00))
+        self.pen.curve_to((134.50, 1353.50), (0.00, 1209.00))
+        self.pen.curve_to((484.00, 1496.00), (269.00, 1496.00))
+        self.pen.close_path()
 
+        self.pen.move_to((289.00, 1002.00))
         self.pen.curve_to((341.50, 808.50), (289.00, 873.00))
         self.pen.curve_to((503.00, 744.00), (394.00, 744.00))
         self.pen.curve_to((614.00, 778.00), (562.00, 744.00))
@@ -297,12 +291,8 @@ class Font:
         self.pen.curve_to((496.00, 1260.00), (596.00, 1260.00))
         self.pen.curve_to((371.00, 1219.00), (423.00, 1260.00))
         self.pen.curve_to((289.00, 1002.00), (289.00, 1155.00))
+        self.pen.close_path(hole=True)
 
-        self.pen.line_to((0.00, 976.00))
-        self.pen.curve_to((134.50, 1353.50), (0.00, 1209.00))
-        self.pen.curve_to((484.00, 1496.00), (269.00, 1496.00))
-
-        self.pen.close_path()
         return (1008.00, 1496.00)
 
     def dot(self):
