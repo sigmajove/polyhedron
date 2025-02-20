@@ -20,8 +20,9 @@ class Font:
         self.pen.curve_to((500.00, 232.00), (373.00, 232.00))
         self.pen.curve_to((666.50, 364.50), (627.00, 232.00))
         self.pen.curve_to((706.00, 747.00), (706.00, 497.00))
-        # self.pen.close_path()
-        self.pen.line_to((1000.00, 747.00))
+        self.pen.close_path(hole=True)
+
+        self.pen.move_to((1000.00, 747.00))
         self.pen.curve_to((888.50, 194.00), (1000.00, 388.00))
         self.pen.curve_to((500.00, 0.00), (777.00, 0.00))
         self.pen.curve_to((111.50, 194.00), (223.00, 0.00))
@@ -33,6 +34,12 @@ class Font:
         self.pen.close_path()
         return (1000.00, 1496.00)
 
+    def add_extras(self, p0, p1, n):
+        dx = p1[0] - p0[0]
+        dy = p1[1] - p0[1]
+        for i in range (1, n):
+            self.pen.add_steiner((p0[0] + (i * dx) / n, p0[1] + (i * dy) / n))
+
     def d1(self):
         self.pen.move_to((0.00, 1036.00))
         self.pen.line_to((0.00, 1230.00))
@@ -40,6 +47,8 @@ class Font:
         self.pen.curve_to((329.00, 1324.00), (275.00, 1267.00))
         self.pen.curve_to((385.00, 1428.00), (366.00, 1363.00))
         self.pen.curve_to((396.00, 1496.00), (396.00, 1467.00))
+        # self.add_extras((0.00, 1230.00), (396.0, 1496.0), 5)
+        # self.add_extras((0.00, 1230.00+300), (396.0, 1496.0+300), 4)
         self.pen.line_to((633.00, 1492.00))
         self.pen.line_to((633.00, 0.00))
         self.pen.line_to((341.00, 0.00))
@@ -130,14 +139,14 @@ class Font:
         self.pen.line_to((x4, y1))
         self.pen.line_to((x4, y0))
         self.pen.line_to((x3, y0))
-        self.pen.line_to((x3, y1))
+        self.pen.close_path()
 
-        self.pen.line_to((x3, y2))
+        # self.pen.move_to((x3, y1))
+        self.pen.move_to((x3, y2))
         self.pen.line_to((x3, y3))
         self.pen.line_to((x1, y2))
         self.pen.line_to((x3, y2))
-
-        self.pen.close_path()
+        self.pen.close_path(hole=True)
         return (1120.00, 1496.00)
 
     def d5(self):
@@ -169,7 +178,6 @@ class Font:
 
     def d6(self):
         self.pen.move_to((286, 495))
-
         self.pen.curve_to((349.00, 304.00), (286.00, 378.00))
         self.pen.curve_to((509.00, 230.00), (412.00, 230.00))
         self.pen.curve_to((658.50, 301.50), (604.00, 230.00))
@@ -178,8 +186,9 @@ class Font:
         self.pen.curve_to((499.00, 749.00), (589.00, 749.00))
         self.pen.curve_to((370.00, 705.00), (426.00, 749.00))
         self.pen.curve_to((286.00, 495.00), (286.00, 640.00))
-        self.pen.line_to((0, 689))
+        self.pen.close_path(hole=True)
 
+        self.pen.move_to((0, 689))
         self.pen.curve_to((14.00, 959.00), (0.00, 855.00))
         self.pen.curve_to((111.00, 1267.00), (39.00, 1144.00))
         self.pen.curve_to((273.50, 1436.00), (173.00, 1372.00))
@@ -198,7 +207,6 @@ class Font:
         self.pen.curve_to((505.00, 0.00), (760.00, 0.00))
         self.pen.curve_to((101.00, 227.00), (231.00, 0.00))
         self.pen.curve_to((0.00, 689.00), (0.00, 406.00))
-        self.pen.line_to((286, 495))
         self.pen.close_path()
         return (1002.00, 1496.00)
 
@@ -222,17 +230,6 @@ class Font:
         self.pen.curve_to((81.50, 959.50), (113.00, 878.00))
         self.pen.curve_to((50.00, 1112.00), (50.00, 1041.00))
 
-        self.pen.line_to((322, 1080))
-        self.pen.curve_to((370.50, 951.00), (322.00, 1001.00))
-        self.pen.curve_to((505.00, 901.00), (419.00, 901.00))
-        self.pen.curve_to((639.50, 951.00), (592.00, 901.00))
-        self.pen.curve_to((687.00, 1080.00), (687.00, 1001.00))
-        self.pen.curve_to((639.50, 1214.50), (687.00, 1166.00))
-        self.pen.curve_to((505.00, 1263.00), (592.00, 1263.00))
-        self.pen.curve_to((370.50, 1214.50), (419.00, 1263.00))
-        self.pen.curve_to((322.00, 1080.00), (322.00, 1166.00))
-        self.pen.line_to((50.00, 1112.00))
-
         self.pen.curve_to((169.00, 1381.50), (50.00, 1270.00))
         self.pen.curve_to((505.00, 1496.00), (288.00, 1496.00))
         self.pen.curve_to((841.00, 1381.50), (722.00, 1496.00))
@@ -245,8 +242,22 @@ class Font:
         self.pen.curve_to((493.00, 0.00), (736.00, 0.00))
         self.pen.curve_to((125.00, 126.50), (250.00, 0.00))
         self.pen.curve_to((0.00, 438.00), (0.00, 255.00))
+        self.pen.curve_to((55.50, 659.00), (0.00, 560.00))
+        self.pen.curve_to((218.00, 808.00), (111.00, 758.00))
+        self.pen.close_path()
 
-        self.pen.line_to((296, 457))
+        self.pen.move_to((322, 1080))
+        self.pen.curve_to((370.50, 951.00), (322.00, 1001.00))
+        self.pen.curve_to((505.00, 901.00), (419.00, 901.00))
+        self.pen.curve_to((639.50, 951.00), (592.00, 901.00))
+        self.pen.curve_to((687.00, 1080.00), (687.00, 1001.00))
+        self.pen.curve_to((639.50, 1214.50), (687.00, 1166.00))
+        self.pen.curve_to((505.00, 1263.00), (592.00, 1263.00))
+        self.pen.curve_to((370.50, 1214.50), (419.00, 1263.00))
+        self.pen.curve_to((322.00, 1080.00), (322.00, 1166.00))
+        self.pen.close_path(hole=True)
+
+        self.pen.move_to((296, 457))
         self.pen.curve_to((351.50, 291.00), (296.00, 350.00))
         self.pen.curve_to((505.00, 232.00), (407.00, 232.00))
         self.pen.curve_to((658.50, 291.00), (603.00, 232.00))
@@ -255,12 +266,8 @@ class Font:
         self.pen.curve_to((505.00, 683.00), (601.00, 683.00))
         self.pen.curve_to((352.50, 625.50), (409.00, 683.00))
         self.pen.curve_to((296.00, 457.00), (296.00, 568.00))
+        self.pen.close_path(hole=True)
 
-        self.pen.line_to((0.00, 438.00))
-        self.pen.curve_to((55.50, 659.00), (0.00, 560.00))
-        self.pen.curve_to((218.00, 808.00), (111.00, 758.00))
-
-        self.pen.close_path()
         return (1007.00, 1496.00)
 
     def d9(self):
