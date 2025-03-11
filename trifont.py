@@ -200,9 +200,13 @@ def CheckPoints(points):
             print("Dup", i, here)
         prev = here
 
+class SuperPen:
+    def __init__(self):
+        pass
 
-class CDTPen:
+class CDTPen(SuperPen):
     def __init__(self, points, scale, x_offset, y_offset):
+        super().__init__()
         self.scale = scale
         self.x_offset = x_offset
         self.y_offset = y_offset
@@ -471,11 +475,298 @@ class CDTPen:
                 if miss > 100:
                     break
 
+class DigitPen(SuperPen):
+    def __init__(self, border, scale, x_offset, y_offset):
+        super().__init__()
+        self.border = border
+        self.scale = scale
+        self.x_offset = x_offset
+        self.y_offset = y_offset
+
+        self.current_hole = []
+        self.holes = []
+        self.islands = []
+        self.steiner = []
+        self.curve_steiner = []
+
+    def move_to(self, p0):
+        self.points = [self.adjust(p0)]
+
+    def line_to(self, p0):
+        v1 = self.adjust(p0)
+        self.interpolate(self.points[-1], v1)
+
+    def interpolate(self, r0, r1):
+        n = math.ceil(distance(r0, r1) / (10 * STEP))
+        dx = r1[0] - r0[0]
+        dy = r1[1] - r0[1]
+        for i in range(1, n):
+            mx = r0[0] + (i * dx) / n
+            my = r0[1] + (i * dy) / n
+            self.points.append((mx, my))
+
+    def curve_to(self, on, off):
+        self.recorded.append("curve", on, off)
+
+    def close_path(self, hole=False):
+        if hole:
+            self.holes.append(self.recorded)
+        else:
+            for p in self.recorded:
+                math p[0]:
+                    case "move":
+                        self.old_move_to(p[1])
+                    case "line":
+                        self.old_line_to(p[1])
+                    case "curve":
+                        self.old_curve_to(p[1], p[2])
+                    case _:
+                        raise RuntimeError(f"Bad tag {p[0]}")
+
+    def add_points(self, r0, r1):
+        n = math.ceil(distance(r0, r1) / (10 * STEP))
+        dx = r1[0] - r0[0]
+        dy = r1[1] - r0[1]
+        for i in range(0, n):
+            mx = r0[0] + (i * dx) / n
+            my = r0[1] + (i * dy) / n
+            self.points.append((mx, my))
+
+    def dump_data(self, i):
+        self.add_steiner_points()
+        rs, ctx = start_draw()
+        ctx.move_to(*self.points[0])
+        for p in self.points[1:]:
+            ctx.line_to(*p)
+        ctx.close_path()
+        ctx.stroke()
+
+        for h in self.holes:
+            ctx.move_to(*h[0])
+            for p in h[1:]:
+                ctx.line_to(*p)
+            ctx.close_path()
+            ctx.stroke()
+
+        ctx.set_source_rgba(1, 0, 0, 1)
+        for s in self.steiner:
+            ctx.arc(*s, 0.005, 0, 2 * math.pi)
+            ctx.fill()
+
+        for island in self.islands:
+            ctx.move_to(*island[0][0])
+            for p in island[0][1:]:
+                ctx.line_to(*p)
+            ctx.close_path()
+            ctx.stroke()
+
+            for s in island[1]:
+                ctx.arc(*s, 0.005, 0, 2 * math.pi)
+                ctx.fill()
+
+        finish_draw(rs, ctx, f"data{i:02d}")
+
+    def triangulate(self):
+        cdt = CDT([Point(*p) for p in self.points])
+        for h in self.holes:
+            # Sometimes font + CDT creates the same point at the beginning
+            # and end of the list of hole points. This causes CDT to fail
+            # silently. Hack around this issue.
+            cp = h[:]
+            if len(cp) >= 2 and cp[0][0] == cp[-1][0] and cp[0][1] == cp[-1][1]:
+                cp.pop()
+            cdt.add_hole([Point(*p) for p in cp])
+        for s in self.steiner:
+            cdt.add_point(Point(*s))
+        result = cdt.triangulate()
+        for h, s in self.islands:
+            cp = h[:]
+            if len(cp) >= 2 and cp[0][0] == cp[-1][0] and cp[0][1] == cp[-1][1]:
+                cp.pop()
+
+            cdt2 = CDT([Point(*p) for p in cp])
+            for p in s:
+                cdt2.add_point(Point(*p))
+            result += cdt2.triangulate()
+        return result
+
+    def add_steiner(self, p):
+        pp = self.adjust(p)
+        self.steiner.append(pp)
+
+    def raw_steiner(self, p):
+        self.steiner.append(p)
+
+    def add_curve_steiner(self, p):
+        self.curve_steiner.append(p)
+
+    def clean_steiner(self):
+        self.steiner = [p for p in self.steiner if self.is_legal_steiner(p)]
+
+    def advance(self, dx):
+        self.x_offset += dx
+
+    def adjust(self, p):
+        return (
+            (p[0] + self.x_offset) * self.scale,
+            (p[1] + self.y_offset) * self.scale,
+        )
+
+    def move_to(self, p0):
+        self.current_point = self.adjust(p0)
+        self.start_path = self.current_point
+        self.current_hole.append(self.current_point)
+
+    def old_close_path(self, hole=False):
+        self.interpolate(self.current_point, self.start_path)
+        if hole:
+            self.islands.append([self.current_hole, self.curve_steiner])
+        elif len(self.current_hole):
+            self.holes.append(self.current_hole)
+            self.steiner.extend(self.curve_steiner)
+        self.current_hole = []
+        self.curve_steiner = []
+
+    def old_curve_to(self, on, off):
+        control_points = np.array(
+            [self.current_point, self.adjust(off), self.adjust(on)]
+        )
+        k = 2  # quadratic
+        n = len(control_points)
+        t = np.concatenate(
+            [np.zeros(k), np.linspace(0, 1, n - k + 1), np.ones(k)]
+        )
+        spl = BSpline(t, control_points, k)
+        u = np.linspace(0, 1, 8)
+        length = 0
+        prev_x = self.current_point
+        for x in spl(u)[1:]:
+            length += distance(x, prev_x)
+            prev_x = x
+        z = math.ceil(length / STEP)
+        u = np.linspace(0, 1, num=z)
+
+        counter = 0
+        prev_x = self.current_point
+        for x in spl(u)[1:]:
+            self.current_hole.append(x)
+            if counter == 2:
+                dist = distance(x, prev_x)
+                mid = midpoint(x, prev_x)
+                c = (x[0] - prev_x[0]) / dist
+                s = (x[1] - prev_x[1]) / dist
+                sx = mid[0] - s * 3 * STEP
+                sy = mid[1] + c * 3 * STEP
+                self.add_curve_steiner((sx, sy))
+            counter += 1
+            if counter == 5:
+                counter = 0
+            prev_x = x
+
+        self.current_point = self.adjust(on)
+
+    # on_adj = self.adjust(on)
+    # off_adj = self.adjust(off)
+    # ct1 = two_thirds(self.ctx.get_current_point(), off_adj)
+    # ct2 = two_thirds(on_adj, off_adj)
+    # self.ctx.curve_to(*ct1, *ct2, *on_adj)
+
+    def dump(self, i):
+        rs, ctx = start_draw()
+
+        ttt = self.triangulate()
+        ctx.set_source_rgba(0, 0, 0, 1)
+        for t in ttt:
+            ctx.move_to(*t.a.coordinates())
+            ctx.line_to(*t.b.coordinates())
+            ctx.line_to(*t.c.coordinates())
+            ctx.close_path()
+            ctx.stroke()
+
+        filename = f"digit{i:02d}"
+        finish_draw(rs, ctx, filename)
+        print(f"Wrote out {filename}")
+
+    def is_legal_steiner(self, p):
+        if not inside.inside(p, self.points):
+            return False
+        for h in self.holes:
+            if inside.inside(p, h):
+                return False
+        return True
+
+    def add_steiner_points(self):
+        min_x = min(p[0] for p in self.points)
+        max_x = max(p[0] for p in self.points)
+        min_y = min(p[1] for p in self.points)
+        max_y = max(p[1] for p in self.points)
+        x_range = max_x - min_x
+        y_range = max_y - min_y
+        gran = 5
+        x_buck = lambda x: min(
+            gran - 1, math.floor(gran * (x - min_x) / x_range)
+        )
+        y_buck = lambda y: min(
+            gran - 1, math.floor(gran * (y - min_y) / y_range)
+        )
+
+        buckets = [[[] for j in range(gran)] for i in range(gran)]
+
+        def add_to_bucket(s):
+            buckets[y_buck(s[1])][x_buck(s[0])].append(s)
+
+        for p in self.points:
+            add_to_bucket(p)
+        for s in self.steiner:
+            add_to_bucket(s)
+        for h in self.holes:
+            for p in h:
+                add_to_bucket(p)
+
+        # generates the distances to all the points in adjacent buckets
+        def dist_near(p):
+            xb = x_buck(p[0])
+            yb = y_buck(p[1])
+            x_lo = max(0, xb - 1)
+            x_hi = min(gran - 1, xb + 1)
+            y_lo = max(0, yb - 1)
+            y_hi = min(gran - 1, yb + 1)
+            for x in range(x_lo, x_hi + 1):
+                for y in range(y_lo, y_hi + 1):
+                    for s in buckets[y][x]:
+                        yield distance(s, p)
+
+        random.seed(12345)
+        rand_point = lambda: (
+            random.uniform(min_x, max_x),
+            random.uniform(min_y, max_y),
+        )
+        num_points = 0
+        miss = 0
+        thresh = 100
+        while True:
+            p = rand_point()
+            if not self.is_legal_steiner(p):
+                continue
+
+            closest = min(dist_near(p), default=None)
+            if closest is None or closest > 0.05:
+                self.raw_steiner(p)
+                add_to_bucket(p)
+                num_points += 1
+                if num_points > thresh:
+                    thresh += 100
+                miss = 0
+            else:
+                miss += 1
+                if miss > 100:
+                    break
+
 
 def main():
     c = Codezilla()
     for x in range(18):
-        c.print(x)
+        c.print_digit(x)
 
 
 class Codezilla:
@@ -593,6 +884,25 @@ class Codezilla:
         scale_factor = text_height / dimension[1]
 
         pen = CDTPen(
+            self.flattened[i],
+            scale_factor,
+            -0.5 * dimension[0],
+            self.flattened_center[i][1] / scale_factor - 0.5 * dimension[1],
+        )
+
+        Font(pen).draw(label)
+        pen.clean_steiner()
+        pen.dump_data(i)
+        pen.dump(i)
+
+
+    def print_digit(self, i):
+        label = LABELS[i]
+        dimension = Font(DummyPen()).draw(label)
+        text_height = 0.45
+        scale_factor = text_height / dimension[1]
+
+        pen = DigitPen(
             self.flattened[i],
             scale_factor,
             -0.5 * dimension[0],

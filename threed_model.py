@@ -70,7 +70,7 @@ class Vertex:
         )
 
     def __repr__(self):
-        return point_image(self.value())
+        return str(self.value())
 
     # Returns a vector whose head is self and tail is other.
     def __sub__(self, other):
@@ -490,30 +490,20 @@ def show_edges(title, edges):
     print(f"==========")
 
 
-# Cope with lack of accuracy in Vertex computations.
-class VertexTable:
-    def __init__(self):
-        self.table = []
-
-    def insert(self, key, value):
-        assert isinstance(key, Vertex)
-        for k, _ in self.table:
-            if key.isclose(k):
-                raise RuntimeError("duplicate key")
-        self.table.append((key, value))
-
-    def find(self, key):
-        assert isinstance(key, Vertex)
-        for k, v in self.table:
-            if key.isclose(k):
-                return v
-        raise RuntimeError("key not found")
-
-
+# Maintains small natural id for each Vertex, and the set of faces
+# that use each Vertex.
 class PointIntern:
+    # Initializes the map to empty.
     def __init__(self):
         self.points = []
 
+    # Finds or creates the id associated with a vertex.
+    # vertex is a Vertex.
+    # faces is an iterable of face ids.
+    # The find function is fuzzy, accepting points that are close as equal.
+    # The set of faces is the union of every face provided by any
+    # call to insert.
+    # Returns the id number of the Vertex.
     def insert(self, vertex, faces):
         for i, point in enumerate(self.points):
             if vertex.isclose(point[0]):
@@ -521,12 +511,6 @@ class PointIntern:
                     point[1].add(f)
                 return i
         self.points.append((vertex, set(faces)))
-        return len(self.points)
-
-    def key(self, vertex):
-        for i in range(len(self.points)):
-            if self.points[i][0] == vertex:
-                return i
         return len(self.points)
 
 
@@ -562,13 +546,23 @@ def test():
     print(area((p2, p0, p1)))
 
 
-pole_area = 0
-barrel_area = 0
+# Given a set of half-spaces, each of which is tangent to a point
+# on a sphere and contains the sphere, finds the polyhedron that is defined
+# by the intersection of those half-spaces.
 
 
+# The result is a list of tuples, one for each face, in the same order in
+# which the half-spaces were passed in. The index of the half space will
+# be the face-id of the corresponding face.
+# The ith tuple will be of the form (v, f, n, c), where
+#   v is the list of vertices of that face in counterclockwise order
+#   f is a list of face-ids that are adjacent to the face (in what order?)
+#   n is normal vector perpendicular to the face, pointing outward.
+#   c is the 3d coordinates of the point where the face touches the sphere.
 def make_polygon(half_spaces):
-    global pole_area
-    global barrel_area
+    # Find all the potential vertices, using the brute force approach
+    # of intersecting all possible triples of spaces. Not all of these
+    # points will be on the surface of the polyhedron.
     points = PointIntern()
     for i in range(0, len(half_spaces)):
         half_i = half_spaces[i]
@@ -578,40 +572,61 @@ def make_polygon(half_spaces):
                 half_k = half_spaces[k]
                 vertex = tripoint(half_i, half_j, half_k)
                 if vertex is not None:
-                    zzz = points.insert(vertex, (i, j, k))
+                    points.insert(vertex, (i, j, k))
 
-    # Delete all the points that are outside the polyhedron.
-    result = []
+    # A list of the (vertex, face-set) pairs that are actual vertices of
+    # the polyhederon.
+    kept_points = []
+
+    # More brute force. Iterate over all the points. For each, iterate
+    # over all the half spaces. Only keep the points that are contained
+    # in every half-space.
     for vertex, faces in points.points:
         keep = True
         for i, h in enumerate(half_spaces):
+            # if i is one of the faces that defines the point, we don't
+            # need to perform any computation, which would be inaccurate
+            # anyway.
             if i in faces:
                 continue
 
+            # Check if the vertex is contained with the half-space h,
+            # allowing for a little inaccuracy. If not, then we don't
+            # keep the vertex.
             if dot_product(h[0:3], vertex.value()) + h[3] > EPSILON:
                 keep = False
                 break
         if keep:
-            result.append((vertex, faces))
+            kept_points.append((vertex, faces))
 
-    # Locate all edges.
+    # We have all the vertices. Now we need to find all the edges.
+
+    # face_edges is an array over all the half-spaces, which correspond
+    # to faces of the polyhedron. For each we maintain a list of edges,
+    # where each edge is represent by pair of vertices followed by the
+    # index of the other face that contains that edge.
+
+    # More brute force. We iterate over all pairs of (vertex, face-set) pairs.
     face_edges = [[] for _ in range(len(half_spaces))]
-    for i in range(len(result)):
-        v_i, f_i = result[i]
-        for j in range(i + 1, len(result)):
-            v_j, f_j = result[j]
+    for i in range(len(kept_points)):
+        v_i, f_i = kept_points[i]
+        for j in range(i + 1, len(kept_points)):
+            v_j, f_j = kept_points[j]
             faces = f_i.intersection(f_j)
             match len(faces):
                 case 2:
+                    # Convert the intersection to a list of two face-ids.
                     f = list(faces)
+
+                    # At this point, we just record two verticies.
+                    # We don't try to order them. That will come later.
                     face_edges[f[0]].append((v_i, v_j, f[1]))
                     face_edges[f[1]].append((v_i, v_j, f[0]))
                 case _:
                     pass
 
+    # Now we have enough information to determine each face.
     result = []
-    pole_area = 0
-    barrel_area = 0
     for z, fe in enumerate(face_edges):
         v0, v1, f = fe[0]
         vertices = None
@@ -654,18 +669,11 @@ def make_polygon(half_spaces):
             if len(vertices) > len(fe):
                 print(f"Error on face {z+1}")
                 raise RuntimeError("face failure")
-        face_area = area(vertices)
-        if len(result) <= 9:
-            pole_area += face_area
-        else:
-            barrel_area += face_area
 
         # Unit vector pointing out of the half space
         normal = Vector(*half_spaces[z][0:3]).normalize()
 
         result.append((vertices, faces, normal, half_spaces[z][0:3]))
-    pole_area /= 10
-    barrel_area /= 8
     return result
 
 
@@ -684,15 +692,15 @@ def start_draw():
 
 
 def finish_draw(rs, ctx, filename):
+    pathname = f"C:/Users/sigma/Documents/{filename}.svg".replace("/", "\\")
     x, y, width, height = rs.ink_extents()
-    surface = cairo.SVGSurface(
-        f"C:/Users/sigma/Documents/{filename}.svg", width, height
-    )
+    surface = cairo.SVGSurface(pathname, width, height)
     ccc = cairo.Context(surface)
     ccc.set_source_surface(rs, -x, -y)
     ccc.paint()
     surface.flush()
     surface.finish()
+    print(f"Wrote {pathname}")
     del ccc
     del ctx
     rs.finish()
@@ -812,39 +820,12 @@ def plot(faces, face_id, from_id, ctx):
         assert hasattr(f, "plotted")
 
 
-# Make a pattern for a cube
-def cube():
-    x_hi = [1.0, 0.0, 0.0, -1.0]
-    x_lo = [-1.0, 0.0, 0.0, -1.0]
-    y_hi = [0.0, 1.0, 0.0, -1.0]
-    y_lo = [0.0, -1.0, 0.0, -1.0]
-    z_hi = [0, 0.0, 1.0, -1.0]
-    z_lo = [0.0, 0.0, -1.0, -1.0]
-
-    plot_pattern(make_polygon([x_lo, x_hi, y_lo, y_hi, z_lo, z_hi]))
-
-
-def make_octa_face(p0, p1, p2):
-    c = cross_product(delta_vector(p1, p2), delta_vector(p1, p0)).value()
-    result = (*c, -dot_product(p0.value(), c))
-    assert within((0, 0, 0), result)
-    return result
-
-
 NW = Vertex(-1, 1, 0)
 NE = Vertex(1, 1, 0)
 SW = Vertex(-1, -1, 0)
 SE = Vertex(1, -1, 0)
 TOP = Vertex(0, 0, math.sqrt(2.0))
 BOTTOM = Vertex(0, 0, -math.sqrt(2.0))
-f0 = make_octa_face(SE, NE, TOP)
-f1 = make_octa_face(NE, NW, TOP)
-f2 = make_octa_face(NW, SW, TOP)
-f3 = make_octa_face(SW, SE, TOP)
-f4 = make_octa_face(NE, SE, BOTTOM)
-f5 = make_octa_face(NW, NE, BOTTOM)
-f6 = make_octa_face(SW, NW, BOTTOM)
-f7 = make_octa_face(SE, SW, BOTTOM)
 
 
 # Get rid of negative zero
@@ -853,25 +834,8 @@ def normalize(plane):
     return result
 
 
-PLANES = {
-    normalize(f0): "f0",
-    normalize(f1): "f1",
-    normalize(f2): "f2",
-    normalize(f3): "f3",
-    normalize(f4): "f4",
-    normalize(f5): "f5",
-    normalize(f6): "f6",
-    normalize(f7): "f7",
-}
-
-
 def plane_image(f):
     return PLANES[normalize(f)]
-
-
-def octa():
-    halves = [f0, f1, f2, f3, f4, f5, f6, f7]
-    plot_pattern(make_polygon(halves))
 
 
 def read_halves(filename):
@@ -890,8 +854,30 @@ def read_halves(filename):
     return halves
 
 
-def attempt(phi, weights):
-    global last_coords
+def poly18():
+    # These parameters define an 18-sided polyhedron whose faces have equal
+    # area within a tenth of a percent.
+    phi = 0.67401686035084829
+    weights = [
+        0987.57259746581451054226,
+        1035.38120169441140205890,
+        0954.69453935047556569771,
+        1036.79718497324597592524,
+        0985.34222651605227838445,
+        1019.27739583333345763094,
+        0981.56770833333337122895,
+        0988.71962500000006457412,
+        1013.32433333333335667703,
+    ]
+
+    # Here is where we define the somewhat nonintuitve numbering system
+    # for the 18 faces. The faces are defined in pairs with each
+    # member of the pair antipodal.
+    # The first 10 faces wrap around the North and South pole, spaced
+    # not quite equally-- that is what the weights are for. Phi is the
+    # angle of these faces with respect to their pole.
+    # The second 8 faces wrap around the equator, not quite evenly spaced,
+    # as defined by the weights.
     coords = []
     total = float(sum(weights[:5]))
     for i in range(5):
@@ -904,33 +890,20 @@ def attempt(phi, weights):
         angle = math.pi * sum(weights[5 : i + 1]) / total
         coords.append((angle, equator))
 
-    last_coords = coords
-    # Convert to Cartesian
+    # Convert from Spherical coordinates to Cartesian coordinates.
     halves = []
     for theta, phi in coords:
         sin_phi = math.sin(phi)
         x = math.cos(theta) * sin_phi
         y = math.sin(theta) * sin_phi
         z = math.cos(phi)
+
+        # The pairs of faces are antipodal.
+        # The -1 appears because we use the unit sphere.
         halves.append((x, y, z, -1.0))
         halves.append((-x, -y, -z, -1.0))
 
     return make_polygon(halves)
-
-
-def iteration(weights):
-    left = 35.0 * math.pi / 180.0
-    right = 40 * math.pi / 180.0
-    attempt(left, weights)
-    attempt(right, weights)
-    for _ in range(20):
-        midpoint = 0.5 * (left + right)
-        poly = attempt(midpoint, weights)
-        if pole_area > barrel_area:
-            right = midpoint
-        else:
-            left = midpoint
-    return poly
 
 
 def two_thirds(oncurve, ctrl):
@@ -1241,10 +1214,11 @@ class TranslatePen:
         self.ctx.fill()
 
 
-SPACING = 100
-
-
 class Font:
+    # SPACING is the distance between the two glyphs of
+    # a two-digit number.
+    SPACING = 100
+
     def __init__(self, pen):
         self.pen = pen
 
@@ -1537,7 +1511,7 @@ class Font:
         return (1008.00, 1496.00)
 
     def dot(self):
-        radius = 150.0 
+        radius = 150.0
         self.pen.move_to((radius, 0.0))
         self.pen.curve_to((2 * radius, radius), (2 * radius, 0))
         self.pen.curve_to((radius, 2 * radius), (2 * radius, 2 * radius))
@@ -1562,7 +1536,7 @@ class Font:
                 return self.d5()
             case 6:
                 x1, y1 = self.d6()
-                x1 += 40 
+                x1 += 40
                 self.pen.advance(x1)
                 x2, y2 = self.dot()
                 self.pen.advance(-x1)
@@ -1573,70 +1547,70 @@ class Font:
                 return self.d8()
             case 9:
                 x1, y1 = self.d9()
-                x1 += 40 
+                x1 += 40
                 self.pen.advance(x1)
                 x2, y2 = self.dot()
                 self.pen.advance(-x1)
                 return (x1 + x2, max(y1, y2))
             case 10:
                 x1, y1 = self.d1()
-                x1 += SPACING
+                x1 += Font.SPACING
                 self.pen.advance(x1)
                 x2, y2 = self.d0()
                 self.pen.advance(-x1)
                 return (x1 + x2, max(y1, y2))
             case 11:
                 x1, y1 = self.d1()
-                x1 += SPACING
+                x1 += Font.SPACING
                 self.pen.advance(x1)
                 x2, y2 = self.d1()
                 self.pen.advance(-x1)
                 return (x1 + x2, max(y1, y2))
             case 12:
                 x1, y1 = self.d1()
-                x1 += SPACING
+                x1 += Font.SPACING
                 self.pen.advance(x1)
                 x2, y2 = self.d2()
                 self.pen.advance(-x1)
                 return (x1 + x2, max(y1, y2))
             case 13:
                 x1, y1 = self.d1()
-                x1 += SPACING
+                x1 += Font.SPACING
                 self.pen.advance(x1)
                 x2, y2 = self.d3()
                 self.pen.advance(-x1)
                 return (x1 + x2, max(y1, y2))
             case 14:
                 x1, y1 = self.d1()
-                x1 += SPACING
+                x1 += Font.SPACING
                 self.pen.advance(x1)
                 x2, y2 = self.d4()
                 self.pen.advance(-x1)
                 return (x1 + x2, max(y1, y2))
             case 15:
                 x1, y1 = self.d1()
-                x1 += SPACING
+                x1 += Font.SPACING
                 self.pen.advance(x1)
                 x2, y2 = self.d5()
                 self.pen.advance(-x1)
                 return (x1 + x2, max(y1, y2))
             case 16:
                 x1, y1 = self.d1()
-                x1 += SPACING
+                x1 += Font.SPACING
                 self.pen.advance(x1)
                 x2, y2 = self.d6()
                 self.pen.advance(-x1)
                 return (x1 + x2, max(y1, y2))
             case 17:
                 x1, y1 = self.d1()
-                x1 += SPACING
+                x1 += Font.SPACING
                 self.pen.advance(x1)
                 x2, y2 = self.d7()
                 self.pen.advance(-x1)
                 return (x1 + x2, max(y1, y2))
             case 18:
                 x1, y1 = self.d1()
-                x1 += SPACING
+                x1 += Font.SPACING
                 self.pen.advance(x1)
                 x2, y2 = self.d8()
                 self.pen.advance(-x1)
@@ -1644,161 +1618,6 @@ class Font:
 
             case _:
                 raise RuntimeError(f"(Bad digit {digit}")
-
-
-def measure_font():
-    b = BoundingBoxPen()
-    f = Font(b)
-    for i in range(10):
-        print(f"            case {i}:")
-        b.reset()
-        f.draw(i)
-        x_min, x_max, y_min, y_max = b.bounds()
-        a = Font(AdjustPen(x_min, y_min))
-        a.draw(i)
-        print(
-            (
-                "                     return "
-                f"({x_max-x_min:.2f}, {y_max-y_min:.2f})"
-            )
-        )
-
-
-def font_stuff():
-    font = TTFont(
-        "c:/Users/sigma/AppData/Local/Microsoft/Windows\
-/Fonts/Helvetica-Bold.ttf"
-    )
-
-    rs, ctx = start_draw()
-    cairo_pen = RecordingPen(rs, ctx)
-
-    glyphSet = font.getGlyphSet()
-    for i, s in enumerate(
-        (
-            "zero",
-            "one",
-            "two",
-            "three",
-            "four",
-            "five",
-            "six",
-            "seven",
-            "eight",
-            "nine",
-        )
-    ):
-        print("            case", i, ":")
-        glyph = glyphSet[s]
-        bounding_pen = BoundingBoxPen()
-        glyph.draw(bounding_pen)
-        # print("y bounds", bounding_pen.min_y, bounding_pen.max_y)
-        cairo_pen.set_trim_x(bounding_pen.min_x)
-        glyph.draw(cairo_pen)
-        x_width = bounding_pen.max_x - bounding_pen.min_x
-        # cairo_pen.advance_x(x_width + 150)
-
-    finish_draw(rs, ctx, "font")
-
-
-class SketchPen:
-    def __init__(self, ctx):
-        self.ctx = ctx
-        self.x_offset = 0
-
-    def advance(self, dx):
-        self.x_offset += dx
-
-    def adjust(self, p):
-        return (p[0] + self.x_offset, p[1])
-
-    def move_to(self, p0):
-        self.ctx.move_to(*self.adjust(p0))
-
-    def line_to(self, p1):
-        self.ctx.line_to(*self.adjust(p1))
-
-    def curve_to(self, on, off):
-        on_adj = self.adjust(on)
-        off_adj = self.adjust(off)
-        ct1 = two_thirds(self.ctx.get_current_point(), off_adj)
-        ct2 = two_thirds(on_adj, off_adj)
-        self.ctx.curve_to(*ct1, *ct2, *on_adj)
-
-    def close_path(self):
-        self.ctx.close_path()
-        self.ctx.fill()
-
-
-class WidthPen:
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        self.max_x = -math.inf
-        self.min_x = math.inf
-        self.max_y = -math.inf
-        self.min_y = math.inf
-
-    def bounds(self):
-        print(
-            (
-                f"min_x={self.min_x:.2f} "
-                f"max_x={self.max_x:.2f} "
-                f"min_y={self.min_y:.2f} "
-                f"max_y={self.max_y:.2f}"
-            )
-        )
-        return (self.min_x, self.max_x)
-
-    def check_x(self, p):
-        x, y = p
-        if x > self.max_x:
-            self.max_x = x
-        if x < self.min_x:
-            self.min_x = x
-        if y > self.max_y:
-            self.max_y = y
-        if y < self.min_y:
-            self.min_y = y
-
-    def move_to(self, p0):
-        self.check_x(p0)
-
-    def line_to(self, p1):
-        self.check_x(p1)
-
-    def curve_to(self, on, off):
-        self.check_x(on)
-
-    def close_path(self):
-        pass
-
-
-def draw_font():
-    rs, ctx = start_draw()
-    s = SketchPen(ctx)
-    f = Font(s)
-    for i in range(1, 19):
-        x, y = f.draw(i)
-        s.advance(x)
-
-    finish_draw(rs, ctx, "sketch")
-
-
-# These weights define a polyhedron whose faces have equal area
-# within a tenth of a percent.
-WEIGHTS = [
-    0987.57259746581451054226,
-    1035.38120169441140205890,
-    0954.69453935047556569771,
-    1036.79718497324597592524,
-    0985.34222651605227838445,
-    1019.27739583333345763094,
-    0981.56770833333337122895,
-    0988.71962500000006457412,
-    1013.32433333333335667703,
-]
 
 
 def test_rigid():
@@ -1868,19 +1687,12 @@ class Rigid:
 
 class CustomPattern:
     def __init__(self):
-        self.poly = iteration(WEIGHTS)
-        print("The poly")
-        for i, f in enumerate(self.poly):
-            print("Face", i)
-            print("Verticies")
-            for v in f[0]:
-                print(v)
-            print("Adacent", f[1])
-            print("Normal", f[2])
-            print("Center", f[3])
+        self.poly = poly18()
 
-        print("End poly")
+        # Each element of flattened are the (clockwise?) list 2d verticies
+        # of each face.
         self.flattened = [None] * len(self.poly)
+
         self.moved = [None] * len(self.poly)
         self.flattened_center = [None] * len(self.poly)
         self.flattened_top = [None] * len(self.poly)
@@ -1991,13 +1803,54 @@ class CustomPattern:
         self.flattened_center[i] = (x, y)
         self.flattened_top[i] = (0, 0)
 
+    def show_faces(self):
+        rs, ctx = start_draw()
+        y_offset = 0
+        for i, f in enumerate(self.flattened):
+            assert f is not None
+            min_x = math.inf
+            max_x = -math.inf
+            min_y = math.inf
+            max_y = -math.inf
+            for p in f:
+                min_x = min(min_x, p[0])
+                max_x = max(max_x, p[0])
+                min_y = min(min_y, p[1])
+                max_y = max(max_y, p[1])
+            first = True
+            for p in f:
+                x = p[0] - min_x
+                y = p[1] - min_y + y_offset
+                if first:
+                    ctx.move_to(x, y)
+                    first = False
+                else:
+                    ctx.line_to(x, y)
+            ctx.close_path()
+            ctx.stroke()
+            x, y = self.flattened_center[i]
+            x -= min_x
+            y -= min_y
+            y += y_offset
+            ctx.arc(x, y, 0.1, 0, 2 * math.pi)
+            ctx.fill()
+
+            x, y = self.flattened_top[i]
+            x -= min_x
+            y -= min_y
+            y += y_offset
+            ctx.arc(x, y, 0.1, 0, 2 * math.pi)
+            ctx.fill()
+
+            y_offset += 0.5 + (max_y - min_y)
+        finish_draw(rs, ctx, "faces")
+
     # src and dst are face numbers that have an edge in common.
     # moved[src] has been already been computed.
     # Compute moved[dst]
     def attach(self, src, dst):
         if self.moved[src] is not None:
             return
-        print(f"Attach src={src} to dst={dst}")
         # Find the common edge.
         src_edge = self.poly[src][1].index(dst)
         src_vtx = self.flattened[src]
@@ -2121,6 +1974,8 @@ class CustomPattern:
                     print("Distance error", dv, dz)
                     assert False
 
+        self.show_faces()
+
         # Create the top
         x = [1, 3, 5, 7, 9]
         self.moved[x[0]] = copy.deepcopy(self.flattened[x[0]])
@@ -2151,55 +2006,6 @@ class CustomPattern:
         self.print_edges(self.moved, "pattern")
 
 
-def custom():
-    weights = [
-        0987.57259746581451054226,
-        1035.38120169441140205890,
-        0954.69453935047556569771,
-        1036.79718497324597592524,
-        0985.34222651605227838445,
-        1019.27739583333345763094,
-        0981.56770833333337122895,
-        0988.71962500000006457412,
-        1013.32433333333335667703,
-    ]
-
-    poly = iteration(weights)
-    areas = [area(p[0]) for p in poly]
-    best_score = min(areas) / max(areas)
-    print(f"Score {best_score}")
-    mod = 0.001
-    for _ in range(0):
-        best_adj = None
-
-        for i in range(0, len(weights)):
-            for sign in range(-1, 2, 2):
-                adj = weights.copy()
-                adj[i] += math.copysign(mod, sign)
-                poly = iteration(adj)
-                areas = [area(p[0]) for p in poly]
-                adj_score = min(areas) / max(areas)
-                if adj_score > best_score:
-                    best_score = adj_score
-                    best_adj = adj
-
-        if best_adj is None:
-            mod = mod * 0.5
-            print(f"Mod is now {mod}")
-        else:
-            print(f"Score {best_score}")
-            weights = best_adj
-
-    print("Best weights")
-    for w in weights:
-        print(format(w, ".20f"))
-
-    print("Result")
-    for p in poly:
-        print(p)
-    better_pattern(poly).make_pattern()
-
-
 def debug_model():
     halves = read_halves("c:/users/sigma/documents/bad_model.bin")
     better_pattern(make_polygon(halves)).make_pattern()
@@ -2226,35 +2032,5 @@ def topper():
     better_pattern(make_polygon(halves)).make_pattern()
 
 
-NWU = (-1, +1, +1)
-NEU = (+1, +1, +1)
-SWU = (-1, -1, +1)
-SEU = (+1, -1, +1)
-NWD = (-1, +1, -1)
-NED = (+1, +1, -1)
-SWD = (-1, -1, -1)
-SED = (+1, -1, -1)
-POINTS = {
-    NWU: "NWU",
-    NEU: "NEU",
-    SWU: "SWU",
-    SEU: "SEU",
-    NWD: "NWD",
-    NED: "NED",
-    SWD: "SWD",
-    SED: "SED",
-}
-
-
-def point_image(point):
-    result = POINTS.get(point, None)
-    if result is None:
-        result = str(point)
-    return result
-
-
 if __name__ == "__main__":
-    # font_stuff()
     CustomPattern().main()
-    # draw_font()
-    # measure_font()
