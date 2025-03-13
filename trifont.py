@@ -133,7 +133,6 @@ class DigitPen:
         # are valid.
         assert len(border) > 2
         self.border = [tuple(p) for p in border]
-        print(f"border = {self.border}")
 
         # Scale and offset are used to map numbers in the font
         # to coordinates that match the border.
