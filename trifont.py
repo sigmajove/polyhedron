@@ -36,30 +36,6 @@ LABELS = (
 )
 
 
-def start_draw():
-    rs = cairo.RecordingSurface(cairo.CONTENT_COLOR_ALPHA, None)
-    ctx = cairo.Context(rs)
-    ctx.scale(1000, -1000)
-    ctx.set_line_width(0.005)
-    ctx.set_source_rgba(0, 0, 0, 1)
-    return (rs, ctx)
-
-
-def finish_draw(rs, ctx, filename):
-    x, y, width, height = rs.ink_extents()
-    surface = cairo.SVGSurface(
-        f"C:/Users/sigma/Documents/{filename}.svg", width, height
-    )
-    ccc = cairo.Context(surface)
-    ccc.set_source_surface(rs, -x, -y)
-    ccc.paint()
-    surface.flush()
-    surface.finish()
-    del ccc
-    del ctx
-    rs.finish()
-
-
 # The Euclidean distance between two 2D points.
 def distance(p, q):
     return math.sqrt((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2)
@@ -118,6 +94,7 @@ class DummyPen:
         pass
 
 
+# The length of segments into which we break down curves.
 STEP = 0.005
 
 
@@ -191,11 +168,11 @@ class DigitPen:
             self.current.append((mx, my))
         self.current.append(r1)
 
-    # Quadratic B - spline
+    # Quadratic B-spline
     def curve_to(self, on, off):
         self.b_spline(self.current[-1], self.adjust(off), self.adjust(on))
 
-    # Cubic B - spline
+    # Cubic B-spline
     def cubic(self, a, b, c):
         self.b_spline(
             self.current[-1], self.adjust(a), self.adjust(b), self.adjust(c)
