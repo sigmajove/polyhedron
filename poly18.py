@@ -4,6 +4,9 @@ import numpy
 # A number expected to be a floating point rounding error away from zero.
 EPSILON = 1e-10
 
+# SIZE is the distance from the center of the sphere to each face.
+SIZE = 2.0  # So that the die is 4mm tall
+
 
 # Maintains small natural id for each Vertex, and the set of faces
 # that use each Vertex.
@@ -65,6 +68,18 @@ class Vertex:
     def value(self):
         return (self.x, self.y, self.z)
 
+    def __le__(self, other):
+        assert isinstance(other, Vertex)
+        return self.value() <= other.value()
+
+    def __eq__(self, other):
+        if isinstance(other, Vertex):
+            return self.value() == other.value()
+        return False
+
+    def __hash__(self):
+        return hash(self.value())
+
 
 def tripoint(plane0, plane1, plane2):
     try:
@@ -122,6 +137,21 @@ class Vector:
     def __add__(self, v):
         assert isinstance(v, Vector)
         return Vector(self.dx + v.dx, self.dy + v.dy, self.dz + v.dz)
+
+    # Scales self by scalar
+    def __mul__(self, scalar):
+        return Vector(self.dx * scalar, self.dy * scalar, self.dz * scalar)
+
+    def isclose(self, other):
+        return (
+            math.isclose(self.dx, other.dx, rel_tol=REL_TOL, abs_tol=ABS_TOL)
+            and math.isclose(
+                self.dy, other.dy, rel_tol=REL_TOL, abs_tol=ABS_TOL
+            )
+            and math.isclose(
+                self.dz, other.dz, rel_tol=REL_TOL, abs_tol=ABS_TOL
+            )
+        )
 
 
 def cross_product(v0, v1):
@@ -272,9 +302,12 @@ def make_polygon(half_spaces):
                 raise RuntimeError("face failure")
 
         # Unit vector pointing out of the half space
-        normal = Vector(*half_spaces[z][0:3]).normalize()
+        normal = Vector(*half_spaces[z][0:3])
 
-        result.append((vertices, faces, normal, half_spaces[z][0:3]))
+        # The point at which the sphere touches the face.
+        center = tuple(SIZE * c for c in half_spaces[z][0:3])
+
+        result.append((vertices, faces, normal, center))
     return result
 
 
@@ -316,27 +349,29 @@ def poly18():
 
     # Convert from Spherical coordinates to Cartesian coordinates.
     halves = []
+    # Size is the distance from the center of the sphere to each face.
     for theta, phi in coords:
         sin_phi = math.sin(phi)
         x = math.cos(theta) * sin_phi
         y = math.sin(theta) * sin_phi
         z = math.cos(phi)
+        # (x, y, z) is a point on the unit square.
+        # x**2 + y**2 + z**2 == 1
 
         # The pairs of faces are antipodal.
-        # The -1 appears because we use the unit sphere.
-        halves.append((x, y, z, -1.0))
-        halves.append((-x, -y, -z, -1.0))
+        halves.append((x, y, z, -SIZE))
+        halves.append((-x, -y, -z, -SIZE))
 
     return make_polygon(halves)
 
 
 def display():
-    for i, l in enumerate (poly18()):
-        print (f"id = {i}")
-        print (f"verticies =")
+    for i, l in enumerate(poly18()):
+        print(f"id = {i}")
+        print(f"verticies =")
         for v in l[0]:
-            print (f"    {v}")
-        print (f"adjacent faces = {l[1]}")
-        print (f"normal_vector = {l[2]}")
-        print (f"center point = {l[3]}")
-        print ("===========")
+            print(f"    {v}")
+        print(f"adjacent faces = {l[1]}")
+        print(f"normal_vector = {l[2]}")
+        print(f"center point = {l[3]}")
+        print("===========")

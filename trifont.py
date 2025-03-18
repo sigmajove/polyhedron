@@ -1,9 +1,11 @@
 from font import Font
 from poly18 import Vertex
+from poly18 import Vector
 from poly18 import cross_product
 from poly18 import dot_product
 from poly18 import poly18
 from scipy.interpolate import BSpline
+from stl import mesh
 import copy
 import inside
 import math
@@ -36,9 +38,10 @@ LABELS = (
 )
 
 
-# The Euclidean distance between two 2D points.
+# The Euclidean distance between two points
 def distance(p, q):
-    return math.sqrt((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2)
+    assert len(p) == len(q)
+    return math.sqrt(sum((a - b) ** 2 for a, b in zip(p, q)))
 
 
 def midpoint(p, q):
@@ -68,6 +71,19 @@ def circumcenter(p1, p2, p3):
     return (x, y)
 
 
+TRIANGLE_COUNTER = 0
+
+
+class Triangle:
+    def __init__(self, p, q, r):
+        global TRIANGLE_COUNTER
+        self.p0 = p
+        self.p1 = q
+        self.p2 = r
+        self.id = TRIANGLE_COUNTER
+        TRIANGLE_COUNTER += 1
+
+
 class DummyPen:
     def __init__(self):
         pass
@@ -95,13 +111,21 @@ class DummyPen:
 
 
 # The length of segments into which we break down curves.
-STEP = 0.005
+STEP = 0.025
+
+# The depth of the indentation numbers
+DEPTH = 0.1
+
+
+# Returns a sorted tuple
+def normalize(a, b):
+    return (a, b) if a <= b else (b, a)
 
 
 class DigitPen:
-    def __init__(self, border, scale, x_offset, y_offset):
-        super().__init__()
-
+    def __init__(self, faceno, border, scale, x_offset, y_offset, zilla):
+        self.faceno = faceno
+        self.zilla = zilla
         self.upper = []
         self.lower = []
 
@@ -143,6 +167,14 @@ class DigitPen:
         for p in border[1:]:
             self.interpolate(p)
         self.interpolate(self.border[0])
+
+        bad = 0
+        for p in self.current:
+            back = Vertex(*self.zilla.rotate_back((p[0], p[1], 0), faceno))
+            if self.zilla.find_join_point(back) is None:
+                bad += 1
+        if bad:
+            print(f"border has {bad} of {len(self.current)} bad points")
 
         # note self.current begins and ends with border[0]
         # Don't use ClosePath to mark the inner point because
@@ -219,15 +251,16 @@ class DigitPen:
                 mid = midpoint(p, prev)
 
                 # The Steiner points at the ends of vectors of length
-                # 3 * STEP, extending from the midpoint of the segment
+                # 6 * STEP, extending from the midpoint of the segment
                 # perpendicular to the segment.
                 cos = (p[0] - prev[0]) / dist
                 sin = (p[1] - prev[1]) / dist
+                parm = 8
                 self.add_raw_steiner(
-                    (mid[0] - sin * 3 * STEP, mid[1] + cos * 3 * STEP)
+                    (mid[0] - sin * parm * STEP, mid[1] + cos * parm * STEP)
                 )
                 self.add_raw_steiner(
-                    (mid[0] + sin * 3 * STEP, mid[1] - cos * 3 * STEP)
+                    (mid[0] + sin * parm * STEP, mid[1] - cos * parm * STEP)
                 )
             counter += 1
             if counter == 5:
@@ -287,11 +320,11 @@ class DigitPen:
                 "segments": self.segments,
                 "holes": self.lower if hole else self.upper,
             },
-            opts="p",
+            opts="pe",
         )
         if "triangles" not in result:
             raise RuntimeError("triangle.triangulate failed")
-        return (result["vertices"], result["triangles"])
+        return (result["vertices"], result["triangles"], result["edges"])
 
     def advance(self, dx):
         self.x_offset += dx
@@ -308,7 +341,7 @@ class DigitPen:
         filename = f"tile{i:02d}"
         with svg_writer.SVGWriter(filename, 25, 1) as ctx:
             ctx.set_line_width(0.001)
-            points, triangles = self.triangulate(hole=False)
+            points, triangles, edges = self.triangulate(hole=False)
 
             ctx.set_source_rgba(0, 0, 1, 0.3)
             for t in triangles:
@@ -326,7 +359,7 @@ class DigitPen:
                 ctx.close_path()
                 ctx.stroke()
 
-            points, triangles = self.triangulate(hole=True)
+            points, triangles, edges = self.triangulate(hole=True)
 
             ctx.set_source_rgb(0, 0, 0)
             for t in triangles:
@@ -337,6 +370,69 @@ class DigitPen:
                 ctx.stroke()
 
             print(f"Wrote out {filename}")
+
+    def make_mesh(self, i):
+        upper_p, upper_triangles, upper_e = self.triangulate(hole=False)
+        upper_points = [(float(p[0]), float(p[1])) for p in upper_p]
+        upper_map = dict((x, i) for i, x in enumerate(upper_points))
+        upper_edges = set(
+            normalize(upper_points[e[0]], upper_points[e[1]]) for e in upper_e
+        )
+
+        lower_p, lower_triangles, lower_e = self.triangulate(hole=True)
+        lower_points = [(float(p[0]), float(p[1])) for p in lower_p]
+        lower_map = dict((x, i) for i, x in enumerate(lower_points))
+        lower_edges = set(
+            normalize(lower_points[e[0]], lower_points[e[1]]) for e in lower_e
+        )
+
+        num_triangles = len(upper_triangles) + len(lower_triangles)
+
+        # The combined points will be upper + lower
+        def to_lower(p):
+            return p + len(upper_points)
+
+        combined_points = []
+        for p in upper_points:
+            combined_points.append((p[0], p[1], -DEPTH))
+        for p in lower_points:
+            combined_points.append((p[0], p[1], 0))
+
+        mesh_triangles = [t for t in upper_triangles]
+        for t in lower_triangles:
+            mesh_triangles.append(tuple([to_lower(p) for p in t]))
+
+        for e in lower_edges & upper_edges:
+            #  u0 -- u1
+            #  |    / |
+            #  |   /  |
+            #  |  /   |
+            #  | /    |
+            #  l0 --- l1
+            u0 = upper_map[e[0]]
+            u1 = upper_map[e[1]]
+            l0 = to_lower(lower_map[e[0]])
+            l1 = to_lower(lower_map[e[1]])
+            mesh_triangles.append((l0, u0, u1))
+            mesh_triangles.append((u1, l1, l0))
+            num_triangles += 2
+
+        for j, p in enumerate(combined_points):
+            p = self.zilla.correct(self.zilla.rotate_back(p, i))
+            combined_points[j] = p
+
+        for p in combined_points:
+            if not isinstance(p, Vertex):
+                print(f"Bad point {type(p)}")
+
+        for t in mesh_triangles:
+            self.zilla.big_mesh.append(
+                Triangle(
+                    combined_points[t[0]],
+                    combined_points[t[1]],
+                    combined_points[t[2]],
+                )
+            )
 
     def is_legal_steiner(self, p):
         return inside.inside(p, self.border)
@@ -398,7 +494,7 @@ class DigitPen:
                 continue
 
             closest = min(dist_near(p), default=None)
-            if closest is None or closest > 0.05:
+            if closest is None or closest > 0.1:
                 self.points.append(p)
                 add_to_bucket(p)
                 num_points += 1
@@ -413,8 +509,32 @@ class DigitPen:
 
 def main():
     c = Codezilla()
-    for x in range(18):
-        c.print_digit(x)
+    for i in range(18):
+        c.print_digit(i)
+    c.check_mesh()
+    c.make_model()
+
+
+def internal_points(r0, r1):
+    n = math.ceil(distance(r0, r1) / (10 * STEP))
+    dx = r1[0] - r0[0]
+    dy = r1[1] - r0[1]
+    dz = r1[2] - r0[2]
+    for i in range(1, n):
+        mx = r0[0] + (i * dx) / n
+        my = r0[1] + (i * dy) / n
+        mz = r0[2] + (i * dz) / n
+        yield (mx, my, mz)
+
+
+def internal_points_2d(r0, r1):
+    n = math.ceil(distance(r0, r1) / (10 * STEP))
+    dx = r1[0] - r0[0]
+    dy = r1[1] - r0[1]
+    for i in range(1, n):
+        mx = r0[0] + (i * dx) / n
+        my = r0[1] + (i * dy) / n
+        yield (mx, my)
 
 
 class Codezilla:
@@ -424,10 +544,182 @@ class Codezilla:
         self.flattened_center = [None] * len(self.poly)
         self.flattened_top = [None] * len(self.poly)
 
+        # x, y, z normal vectors that will allow transforming
+        # the flattened mesh back to its original place on the polyhedron.
+        self.axes = [None] * len(self.poly)
+
+        self.translate = [None] * len(self.poly)
+
+        self.store_join_points()
+
+        # This is the model we are producing.
+        # A list of 3-tuples of 2-tuples of (x, y, z) coordinates.
+        self.big_mesh = []
+
         self.poles([0, 2, 4, 6, 8])
         self.poles([1, 3, 5, 7, 9])
         for i in (10, 12, 14, 16, 11, 13, 15, 17):
             self.barrel(i)
+
+    # Join points are on the intersection of two faces.
+    # When we map 3d points to 2d points and back to 3d,
+    # we don't necessarily get back the same points we put in.
+    # If the point we get back is close to join point, we move it
+    # back to the join point.
+    def store_join_points(self):
+        edges = dict()
+        for x, face in enumerate(self.poly):
+            prev = face[0][-1]
+            for p in face[0]:
+                key = normalize(prev.value(), p.value())
+                edges[key] = edges.get(key, 0) + 1
+                prev = p
+        for v in edges.values():
+            assert v == 2
+
+        vertices = set()
+        for k in edges.keys():
+            vertices.add(k[0])
+            vertices.add(k[1])
+
+        self.join_points = [Vertex(*p) for p in vertices]
+        for k in edges.keys():
+            for p in internal_points(k[0], k[1]):
+                self.join_points.append(Vertex(*p))
+
+    def find_join_point(self, v):
+        result = None
+        for p in self.join_points:
+            if p.isclose(v):
+                if result is not None:
+                    print("ambiguous join")
+                    print("approx", v)
+                    print(result)
+                    print(p)
+                    raise RuntimeError("bad")
+                result = p
+        return result
+
+    def is_join_point(self, v):
+        assert isinstance(v, Vertex)
+        return v in self.join_points
+
+    def correct(self, v):
+        v = Vertex(*v)
+        c = self.find_join_point(v)
+        return v if c is None else c
+
+    def mesh_perimeter(self, mesh, points):
+        print("Mesh Perimeter")
+        edges = dict()
+
+        def add_edge(p, q, t):
+            key = normalize(p, q)
+            s = edges.get(key, None)
+            if s is None:
+                s = []
+                edges[key] = s
+            s.append(t)
+
+        for i, t in enumerate(mesh):
+            a, b, c = t
+            add_edge(a, b, i)
+            add_edge(b, c, i)
+            add_edge(c, a, i)
+
+        path = dict()
+
+        def add_path(i, j):
+            s = path.get(i, None)
+            if s is None:
+                s = []
+                path[i] = s
+            s.append(j)
+
+        def erase_path(i, j):
+            s = path[i]
+            s.remove(j)
+            if len(s) == 0:
+                del path[i]
+
+        start = None
+        for k, v in edges.items():
+            if len(v) == 1:
+                # border edge
+                add_path(k[0], k[1])
+                add_path(k[1], k[0])
+            elif len(v) == 2:
+                pass
+            else:
+                raise RuntimeError(f"{len(v)} triangles with edge")
+
+        for p in path.values():
+            assert len(p) == 2
+
+        start = next(iter(path.keys()))
+        j = start
+        k = path[j][0]
+        trail = [j, k]
+        while True:
+            n = path[k]
+            n = n[0] if n[1] == j else n[1]
+            if n == start:
+                break
+            trail.append(n)
+            j, k = k, n
+        assert len(path) == len(trail)
+        if True:
+            for t in trail:
+                p = points[t]
+                # flag = "" if self.is_join_point(Vertex() else " !!!"
+                # print(f"{p.x:.14f}, {p.y:.14f}, {p.z:.14f}")
+                print (p)
+
+        with svg_writer.SVGWriter("perimeter", 50, 0.01) as ctx:
+            points = [points[t] for t in trail]
+            ctx.move_to(p[0], p[1])
+            for p in points[1:]: 
+                ctx.line_to(p[0], p[1])
+            ctx.close_path()
+            ctx.stroke()
+            for p in points:
+                ctx.arc(p[0], p[1], .02, 0, 2 * math.pi)
+                ctx.fill()
+
+    def make_model(self):
+        model = mesh.Mesh(np.zeros(len(self.big_mesh), dtype=mesh.Mesh.dtype))
+        for i, t in enumerate(self.big_mesh):
+            model.vectors[i][0] = t.p0.value()
+            model.vectors[i][1] = t.p1.value()
+            model.vectors[i][2] = t.p2.value()
+        model.check(exact=True)
+        model.save("c:/users/sigma/documents/model18.stl")
+        print("Wrote out model")
+
+    def check_mesh(self):
+        counter = 0
+        edges = dict()
+        for i, t in enumerate(self.big_mesh):
+
+            def add_triangle(key):
+                s = edges.get(key, None)
+                if s is None:
+                    s = []
+                    edges[key] = s
+                s.append(t.id)
+
+            add_triangle(normalize(t.p0, t.p1))
+            add_triangle(normalize(t.p1, t.p2))
+            add_triangle(normalize(t.p2, t.p0))
+
+            counter += 1
+        print(f"{counter} triangles")
+        print(f"{len(edges)} edges")
+        bad_triangles = 0
+        for k, v in edges.items():
+            if len(v) != 2:
+                bad_triangles += 1
+        print (bad_triangles, "Bad triangles")
 
     def poles(self, faces):
         v = self.find_vertex(faces)
@@ -457,6 +749,8 @@ class Codezilla:
 
         y_axis = (top - bottom).normalize()
         x_axis = cross_product(y_axis, self.poly[i][2])
+        self.axes[i] = (x_axis, y_axis, self.poly[i][2])
+        self.translate[i] = (0, 0)
 
         flat = []
         for vx in vertices:
@@ -466,6 +760,16 @@ class Codezilla:
 
         self.flattened[i] = flat
 
+        for j, v in enumerate(vertices):
+            back = Vertex(
+                *self.rotate_back((flat[j][0], flat[j][1], 0), i)
+            )
+            if not back.isclose(v):
+                self.check_axes(i)
+                print("orig =", v)
+                print("back =", back)
+                raise RuntimeError("round trip failure")
+
         center = self.poly[i][3]
         x = dot_product(x_axis.value(), center)
         y = dot_product(y_axis.value(), center)
@@ -473,6 +777,18 @@ class Codezilla:
         x = dot_product(x_axis.value(), top.value())
         y = dot_product(y_axis.value(), top.value())
         self.flattened_top[i] = (x, y)
+
+    def check_axes(self, i):
+        axes = self.axes[i]
+
+        # Check that the axes are all unit vectors.
+        for a in axes:
+            assert math.isclose(a.dx * a.dx + a.dy * a.dy + a.dz * a.dz, 1.0)
+
+        # Check that they follow the right-hand rule
+        assert axes[0].isclose(cross_product(axes[1], axes[2]))
+        assert axes[1].isclose(cross_product(axes[2], axes[0]))
+        assert axes[2].isclose(cross_product(axes[0], axes[1]))
 
     def rotate_pole(self, i, v):
         vertices = self.poly[i][0]
@@ -488,24 +804,38 @@ class Codezilla:
             .scale(0.5)
             .normalize()
         )
-
         x_axis = cross_product(y_axis, self.poly[i][2])
+
+        self.axes[i] = (x_axis, y_axis, self.poly[i][2])
         flat = []
         max_y = -math.inf
-        for vx in vertices:
-            x = dot_product(x_axis.value(), vx.value())
-            y = dot_product(y_axis.value(), vx.value())
+        center = Vertex(*self.poly[i][3])
+        for v in vertices:
+            x = dot_product(x_axis.value(), v.value())
+            y = dot_product(y_axis.value(), v.value())
             if y > max_y:
                 max_y = y
             flat.append([x, y])
 
         # Translate so the coordinate of the apex is(0, 0)
         align = flat[apex][0]
+        self.translate[i] = (-align, -max_y)
+
         for f in flat:
             f[0] -= align
             f[1] -= max_y
 
         self.flattened[i] = flat
+
+        for j, v in enumerate(vertices):
+            back = Vertex(
+                *self.rotate_back((flat[j][0], flat[j][1], 0), i)
+            )
+            if not back.isclose(v):
+                self.check_axes(i)
+                print("orig =", v)
+                print("back =", back)
+                raise RuntimeError("round trip failure")
 
         center = self.poly[i][3]
         x = dot_product(x_axis.value(), center) - align
@@ -525,24 +855,43 @@ class Codezilla:
         assert len(result) == 1
         return next(iter(result))
 
+    # Move the flattened point back to its original 3d position
+    def rotate_back(self, p, i, trace=False):
+        x_flat = p[0] - self.translate[i][0]
+        y_flat = p[1] - self.translate[i][1]
+        z_flat = p[2]
+        if trace:
+            print("x_flat", x_flat)
+            print("y_flat", y_flat)
+            print("z_flat", z_flat)
+        inflated = (
+            self.axes[i][0] * x_flat
+            + self.axes[i][1] * y_flat
+            + self.axes[i][2] * z_flat
+        )
+        return inflated.move(Vertex(*self.poly[i][3]))
+
     def print_digit(self, i):
         label = LABELS[i]
-
         dimension = Font(DummyPen()).draw(label)
-        text_height = 0.45
+        text_height = 0.9  # Warning: dependent on size of die
         scale_factor = text_height / dimension[1]
 
         pen = DigitPen(
-            self.flattened[i],
-            scale_factor,
-            -0.5 * dimension[0],
-            self.flattened_center[i][1] / scale_factor - 0.5 * dimension[1],
+            faceno=i,
+            border=self.flattened[i],
+            scale=scale_factor,
+            x_offset=-0.5 * dimension[0],
+            y_offset=self.flattened_center[i][1] / scale_factor
+            - 0.5 * dimension[1],
+            zilla=self,
         )
 
         Font(pen).draw(label)
         pen.add_steiner_points()
-        pen.dump_data(i)
-        pen.dump(i)
+        # pen.dump_data(i)
+        # pen.dump(i)
+        pen.make_mesh(i)
 
 
 main()
