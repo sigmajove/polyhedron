@@ -6,13 +6,14 @@ from poly18 import dot_product
 from poly18 import poly18
 from scipy.interpolate import BSpline
 from stl import mesh
+import calc  # For debugging
 import copy
-import inside
 import math
 import random
 import svg_writer
 import triangle
 import numpy as np
+import rotate_edge
 
 # Maps the internal numbering used by poly18 for the faces to the
 # numbers we want inscribed on each face.
@@ -71,6 +72,98 @@ def circumcenter(p1, p2, p3):
     return (x, y)
 
 
+def circle_through_points(x1, y1, x2, y2, x3, y3):
+    s1 = x1 * x1 + y1 * y1
+    s2 = x2 * x2 + y2 * y2
+    s3 = x3 * x3 + y3 * y3
+
+    y12 = y1 - y2
+    y23 = y2 - y3
+    y31 = y3 - y1
+    det = 2 * (x1 * y23 + x2 * y31 + x3 * y12)
+
+    # Calculate center coordinates
+    x0 = (s1 * y23 + s2 * y31 + s3 * y12) / det
+    y0 = (s1 * (x3 - x2) + s2 * (x1 - x3) + s3 * (x2 - x1)) / det
+
+    # Calculate radius squared
+    r_squared = (x1 - x0) ** 2 + (y1 - y0) ** 2
+
+    return (x0, y0, r_squared)
+
+
+def in_circle(a, b, c, p):
+    x0, y0, r_squared = circle_through_points(*a, *b, *c)
+    dist = (p[0] - x0) ** 2 + (p[1] - y0) ** 2
+    return dist <= r_squared
+
+
+def is_convex_quad(a, b, c, d):
+    prev2 = c
+    prev = d
+    sign = None
+    for p in [a, b, c, d]:
+        dx0 = prev[0] - prev2[0]
+        dy0 = prev[1] - prev2[1]
+        dx1 = p[0] - prev[0]
+        dy1 = p[1] - prev[1]
+
+        cross = dx0 * dy1 - dy0 * dx1
+        if abs(cross) < 1e-4:
+            return False
+        s = -1 if cross < 0 else 1
+        if sign is None:
+            sign = s
+        else:
+            if sign != s:
+                return False
+        prev2 = prev
+        prev = p
+
+    return True
+
+
+def check_triangulation(vertices, triangles, neighbors, tag):
+    with svg_writer.SVGWriter(tag, 25, 0.005) as ctx:
+        for tr0, n in enumerate(neighbors):
+            for v, tr1 in enumerate(n):
+                xxx = triangles[tr0]
+                apex0 = xxx[v]  # point index
+                o0, o1 = (1, 2) if v == 0 else (0, 2) if v == 1 else (0, 1)
+                other0 = xxx[o0]  # point index
+                other1 = xxx[o1]  # point index
+                if tr1 >= 0:
+                    yyy = triangles[tr1]
+                    apex1 = None
+                    for p in yyy:
+                        if p != other0 and p != other1:
+                            if apex1 is not None:
+                                raise RuntimeError("too many apex1")
+                            apex1 = p
+                    if apex1 is None:
+                        raise RuntimeError("cant find apex1")
+                    # I now have point indices
+                    # apex0, apex1, other0, other1
+                    # translate them to coordinates
+                    e0 = vertices[other0]
+                    e1 = vertices[other1]
+                    t0 = vertices[apex0]
+                    t1 = vertices[apex1]
+                    if is_convex_quad(e0, t0, e1, t1) and in_circle(
+                        e0, t0, e1, t1
+                    ):
+                        print(f"Found non-Delauney edge in {tag}")
+                        print(f"bad edge {e0}, {e1}")
+                        ctx.set_source_rgb(1, 0, 0)
+                        ctx.set_line_width(0.01)
+                    else:
+                        ctx.set_source_rgb(0, 0, 0)
+                        ctx.set_line_width(0.005)
+                    ctx.move_to(*e0)
+                    ctx.line_to(*e1)
+                    ctx.stroke()
+
+
 TRIANGLE_COUNTER = 0
 
 
@@ -82,6 +175,12 @@ class Triangle:
         self.p2 = r
         self.id = TRIANGLE_COUNTER
         TRIANGLE_COUNTER += 1
+
+    def area(self):
+        v1 = self.p1 - self.p0
+        v2 = self.p2 - self.p0
+        c = cross_product(v1, v2)
+        return c.magnitude()
 
 
 class DummyPen:
@@ -110,7 +209,7 @@ class DummyPen:
         pass
 
 
-# The length of segments into which we break down curves.
+pass
 STEP = 0.025
 
 # The depth of the indentation numbers
@@ -128,6 +227,8 @@ class DigitPen:
         self.zilla = zilla
         self.upper = []
         self.lower = []
+
+        self.manual_steiner = []
 
         # Record the constructor parameters.
         # We use the border to determine whether random Steiner points
@@ -255,7 +356,7 @@ class DigitPen:
                 # perpendicular to the segment.
                 cos = (p[0] - prev[0]) / dist
                 sin = (p[1] - prev[1]) / dist
-                parm = 8
+                parm = 2
                 self.add_raw_steiner(
                     (mid[0] - sin * parm * STEP, mid[1] + cos * parm * STEP)
                 )
@@ -263,7 +364,7 @@ class DigitPen:
                     (mid[0] + sin * parm * STEP, mid[1] - cos * parm * STEP)
                 )
             counter += 1
-            if counter == 5:
+            if counter == 4:
                 counter = 0
 
     def close_path(self, hole=False, inner=None):
@@ -313,18 +414,58 @@ class DigitPen:
 
         print(f"Wrote {filename}")
 
-    def triangulate(self, hole):
+    def triangulate(self, lower, tag=None):
         result = triangle.triangulate(
             {
                 "vertices": self.points,
                 "segments": self.segments,
-                "holes": self.lower if hole else self.upper,
+                "holes": self.lower if lower else self.upper,
             },
-            opts="pe",
+            opts="pn",
         )
-        if "triangles" not in result:
-            raise RuntimeError("triangle.triangulate failed")
-        return (result["vertices"], result["triangles"], result["edges"])
+
+        # The points returned by triangle.triangulate use weird numpy
+        # types for the coordinates. Convert them to tuples of floats.
+        # This used to be necessary so that points could be hashed;
+        # not clear it is needed any more.
+        points = [(float(p[0]), float(p[1])) for p in result["vertices"]]
+
+        triangles = result["triangles"]
+        neighbors = result["neighbors"]
+
+        # Delaunay triangulation works pretty well, but sometimes it
+        # can produce triangles that Blender's 3D print toolkit flags as
+        # being too skinny. Locate and repair skinny triangle, where possible.
+        for i in range(len(triangles)):
+            rotate_edge.repair_if_skinny(points, triangles, neighbors, i)
+
+        # For debugging
+        calc.check_neighbors(triangles, neighbors)
+
+        # Find all the boundary edges.
+        # These are found in triangles with missing neighbors.
+        boundaries = []
+        for tid, n in enumerate(neighbors):
+            for i, neigh in enumerate(n):
+                if neigh < 0:
+                    tri = triangles[tid]
+                    # List the vertices of the edge in counterclockwise order.
+                    match i:
+                        case 0:
+                            edge = (tri[1], tri[2])
+                        case 1:
+                            edge = (tri[2], tri[0])
+                        case 2:
+                            edge = (tri[0], tri[1])
+                        case _:
+                            raise RuntimeError(
+                                "Triangle has more than three neighbors"
+                            )
+                    if lower:
+                        # Use clockwise order
+                        edge = (edge[1], edge[0])
+                    boundaries.append(edge)
+        return (points, triangles, boundaries)
 
     def advance(self, dx):
         self.x_offset += dx
@@ -341,49 +482,47 @@ class DigitPen:
         filename = f"tile{i:02d}"
         with svg_writer.SVGWriter(filename, 25, 1) as ctx:
             ctx.set_line_width(0.001)
-            points, triangles, edges = self.triangulate(hole=False)
+            points, triangles, _ = self.triangulate(lower=False)
 
-            ctx.set_source_rgba(0, 0, 1, 0.3)
+            ctx.set_source_rgb(0, 0, 0)
             for t in triangles:
                 ctx.move_to(*points[t[0]])
                 ctx.line_to(*points[t[1]])
                 ctx.line_to(*points[t[2]])
                 ctx.close_path()
+                ctx.stroke()
+
+            points, triangles, _ = self.triangulate(lower=True)
+
+            ctx.set_source_rgb(0, 0, 0)
+            for t in triangles:
+                ctx.move_to(*points[t[0]])
+                ctx.line_to(*points[t[1]])
+                ctx.line_to(*points[t[2]])
+                ctx.close_path()
+                ctx.set_source_rgba(1, 0, 0, 0.6)
                 ctx.fill()
+                ctx.set_source_rgb(0, 0, 0)
 
-            ctx.set_source_rgb(0, 0, 0)
-            for t in triangles:
                 ctx.move_to(*points[t[0]])
                 ctx.line_to(*points[t[1]])
                 ctx.line_to(*points[t[2]])
                 ctx.close_path()
                 ctx.stroke()
 
-            points, triangles, edges = self.triangulate(hole=True)
-
-            ctx.set_source_rgb(0, 0, 0)
-            for t in triangles:
-                ctx.move_to(*points[t[0]])
-                ctx.line_to(*points[t[1]])
-                ctx.line_to(*points[t[2]])
-                ctx.close_path()
-                ctx.stroke()
+            ctx.set_source_rgb(1, 0, 0)
+            for s in self.manual_steiner:
+                ctx.arc(*s, 0.005, 0, 2 * math.pi)
+                ctx.fill()
 
             print(f"Wrote out {filename}")
 
     def make_mesh(self, i):
-        upper_p, upper_triangles, upper_e = self.triangulate(hole=False)
-        upper_points = [(float(p[0]), float(p[1])) for p in upper_p]
-        upper_map = dict((x, i) for i, x in enumerate(upper_points))
-        upper_edges = set(
-            normalize(upper_points[e[0]], upper_points[e[1]]) for e in upper_e
+        upper_points, upper_triangles, upper_boundary = self.triangulate(
+            lower=False, tag=f"upper{i:02d}"
         )
-
-        lower_p, lower_triangles, lower_e = self.triangulate(hole=True)
-        lower_points = [(float(p[0]), float(p[1])) for p in lower_p]
-        lower_map = dict((x, i) for i, x in enumerate(lower_points))
-        lower_edges = set(
-            normalize(lower_points[e[0]], lower_points[e[1]]) for e in lower_e
+        lower_points, lower_triangles, lower_boundary = self.triangulate(
+            lower=True, tag=f"lower{i:02d}"
         )
 
         num_triangles = len(upper_triangles) + len(lower_triangles)
@@ -402,24 +541,27 @@ class DigitPen:
         for t in lower_triangles:
             mesh_triangles.append(tuple([to_lower(p) for p in t]))
 
-        for e in lower_edges & upper_edges:
+        for e in set(lower_boundary) & set(upper_boundary):
             #  u0 -- u1
             #  |    / |
             #  |   /  |
             #  |  /   |
             #  | /    |
             #  l0 --- l1
-            u0 = upper_map[e[0]]
-            u1 = upper_map[e[1]]
-            l0 = to_lower(lower_map[e[0]])
-            l1 = to_lower(lower_map[e[1]])
-            mesh_triangles.append((l0, u0, u1))
-            mesh_triangles.append((u1, l1, l0))
+            u0 = e[0]
+            u1 = e[1]
+            l0 = to_lower(e[0])
+            l1 = to_lower(e[1])
+            mesh_triangles.append((u0, l0, u1))
+            mesh_triangles.append((l0, l1, u1))
             num_triangles += 2
 
+        # Translate the 2d triangulation back to its
+        # original 3d coordinates.
         for j, p in enumerate(combined_points):
-            p = self.zilla.correct(self.zilla.rotate_back(p, i))
-            combined_points[j] = p
+            combined_points[j] = self.zilla.correct(
+                self.zilla.rotate_back(p, i)
+            )
 
         for p in combined_points:
             if not isinstance(p, Vertex):
@@ -434,17 +576,49 @@ class DigitPen:
                 )
             )
 
+    # Test that p is fully within border.
+    # It must be at least 0.05 away from any edge.
+    # Assumes that border is convex.
     def is_legal_steiner(self, p):
-        return inside.inside(p, self.border)
+        def position(p1, p2, q):
+            num = (
+                (p2[0] - p1[0]) * q[1]
+                - (p2[1] - p1[1]) * q[0]
+                - p2[0] * p1[1]
+                + p2[1] * p1[0]
+            )
+            d_sq = (p2[0] - p1[0]) ** 2 + (p2[1] - p1[1]) ** 2
+            return num * num >= d_sq * (0.05) ** 2
+
+        prev = self.border[-1]
+        for z in self.border:
+            if not (position(prev, z, p)):
+                return False
+            prev = z
+        return True
 
     def add_raw_steiner(self, p):
+        if self.is_legal_steiner(p) and self.not_too_close(p):
+            self.points.append(p)
+
+    def force_raw_steiner(self, p):
         if self.is_legal_steiner(p):
             self.points.append(p)
 
     def add_steiner(self, p):
-        self.add_raw_steiner(self.adjust(p))
+        a = self.adjust(p)
+        self.manual_steiner.append(a)
+        self.force_raw_steiner(a)
 
-    def add_steiner_points(self):
+    def not_too_close(self, p):
+        return (
+            min((distance(q, p) for q in self.points), default=math.inf) > 0.2
+        )
+
+    def add_steiner_points(self, trace=False):
+        if trace:
+            print("Tracing steiner")
+            min_dist = math.inf
         min_x = min(p[0] for p in self.border)
         max_x = max(p[0] for p in self.border)
         min_y = min(p[1] for p in self.border)
@@ -493,8 +667,13 @@ class DigitPen:
             if not self.is_legal_steiner(p):
                 continue
 
-            closest = min(dist_near(p), default=None)
-            if closest is None or closest > 0.1:
+            if self.not_too_close(p):
+                if trace:
+                    dist = min(
+                        (distance(q, p) for q in self.points), default=math.inf
+                    )
+                    if dist < min_dist:
+                        min_dist = dist
                 self.points.append(p)
                 add_to_bucket(p)
                 num_points += 1
@@ -505,6 +684,9 @@ class DigitPen:
                 miss += 1
                 if miss > 100:
                     break
+
+        if trace:
+            print(f"Minimum Steiner dist {min_dist}")
 
 
 def main():
@@ -673,17 +855,17 @@ class Codezilla:
                 p = points[t]
                 # flag = "" if self.is_join_point(Vertex() else " !!!"
                 # print(f"{p.x:.14f}, {p.y:.14f}, {p.z:.14f}")
-                print (p)
+                print(p)
 
         with svg_writer.SVGWriter("perimeter", 50, 0.01) as ctx:
             points = [points[t] for t in trail]
             ctx.move_to(p[0], p[1])
-            for p in points[1:]: 
+            for p in points[1:]:
                 ctx.line_to(p[0], p[1])
             ctx.close_path()
             ctx.stroke()
             for p in points:
-                ctx.arc(p[0], p[1], .02, 0, 2 * math.pi)
+                ctx.arc(p[0], p[1], 0.02, 0, 2 * math.pi)
                 ctx.fill()
 
     def make_model(self):
@@ -719,7 +901,10 @@ class Codezilla:
         for k, v in edges.items():
             if len(v) != 2:
                 bad_triangles += 1
-        print (bad_triangles, "Bad triangles")
+        print(bad_triangles, "Bad triangles")
+
+        min_area = min(t.area() for t in self.big_mesh)
+        print(f"smallest triangle is {min_area}")
 
     def poles(self, faces):
         v = self.find_vertex(faces)
@@ -761,9 +946,7 @@ class Codezilla:
         self.flattened[i] = flat
 
         for j, v in enumerate(vertices):
-            back = Vertex(
-                *self.rotate_back((flat[j][0], flat[j][1], 0), i)
-            )
+            back = Vertex(*self.rotate_back((flat[j][0], flat[j][1], 0), i))
             if not back.isclose(v):
                 self.check_axes(i)
                 print("orig =", v)
@@ -828,9 +1011,7 @@ class Codezilla:
         self.flattened[i] = flat
 
         for j, v in enumerate(vertices):
-            back = Vertex(
-                *self.rotate_back((flat[j][0], flat[j][1], 0), i)
-            )
+            back = Vertex(*self.rotate_back((flat[j][0], flat[j][1], 0), i))
             if not back.isclose(v):
                 self.check_axes(i)
                 print("orig =", v)
@@ -888,9 +1069,9 @@ class Codezilla:
         )
 
         Font(pen).draw(label)
-        pen.add_steiner_points()
+        pen.add_steiner_points(trace=i == 4)
         # pen.dump_data(i)
-        # pen.dump(i)
+        pen.dump(i)
         pen.make_mesh(i)
 
 

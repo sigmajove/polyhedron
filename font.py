@@ -115,8 +115,8 @@ class Font:
         self.pen.curve_to((70.00, 201.00), (190.00, 0.00))
         self.pen.curve_to((0.00, 481.00), (7.00, 308.00))
         self.pen.line_to((280.00, 481.00))
-        self.pen.add_steiner((500, 450))
-        self.pen.add_steiner((500, 1060))
+        self.pen.add_steiner((500, 1000))
+        self.pen.add_steiner((500, 400))
         self.pen.close_path(hole=True, inner=(389.12, 680.02))
         return (1003.00, 1496.00)
 
