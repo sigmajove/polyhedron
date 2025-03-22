@@ -6,7 +6,6 @@ from poly18 import dot_product
 from poly18 import poly18
 from scipy.interpolate import BSpline
 from stl import mesh
-import calc  # For debugging
 import copy
 import math
 import random
@@ -424,14 +423,16 @@ class DigitPen:
             opts="pn",
         )
 
-        # The points returned by triangle.triangulate use weird numpy
-        # types for the coordinates. Convert them to tuples of floats.
-        # This used to be necessary so that points could be hashed;
-        # not clear it is needed any more.
+        # The results returned by triangle.triangulate use weird numpy
+        # types for the coordinates. To avoid surprises, convert
+        # everything to native Pyghon types.
         points = [(float(p[0]), float(p[1])) for p in result["vertices"]]
-
-        triangles = result["triangles"]
-        neighbors = result["neighbors"]
+        triangles = [
+            [int(t[0]), int(t[1]), int(t[2])] for t in result["triangles"]
+        ]
+        neighbors = [
+            [int(n[0]), int(n[1]), int(n[2])] for n in result["neighbors"]
+        ]
 
         # Delaunay triangulation works pretty well, but sometimes it
         # can produce triangles that Blender's 3D print toolkit flags as
@@ -439,8 +440,8 @@ class DigitPen:
         for i in range(len(triangles)):
             rotate_edge.repair_if_skinny(points, triangles, neighbors, i)
 
-        # For debugging
-        calc.check_neighbors(triangles, neighbors)
+        # Make sure rotate_edge didn't mess up the neighbors.
+        rotate_edge.check_neighbors(triangles, neighbors)
 
         # Find all the boundary edges.
         # These are found in triangles with missing neighbors.
@@ -791,82 +792,82 @@ class Codezilla:
         c = self.find_join_point(v)
         return v if c is None else c
 
-    def mesh_perimeter(self, mesh, points):
-        print("Mesh Perimeter")
-        edges = dict()
+    #   def mesh_perimeter(self, mesh, points):
+    #       print("Mesh Perimeter")
+    #       edges = dict()
 
-        def add_edge(p, q, t):
-            key = normalize(p, q)
-            s = edges.get(key, None)
-            if s is None:
-                s = []
-                edges[key] = s
-            s.append(t)
+    #       def add_edge(p, q, t):
+    #           key = normalize(p, q)
+    #           s = edges.get(key, None)
+    #           if s is None:
+    #               s = []
+    #               edges[key] = s
+    #           s.append(t)
 
-        for i, t in enumerate(mesh):
-            a, b, c = t
-            add_edge(a, b, i)
-            add_edge(b, c, i)
-            add_edge(c, a, i)
+    #       for i, t in enumerate(mesh):
+    #           a, b, c = t
+    #           add_edge(a, b, i)
+    #           add_edge(b, c, i)
+    #           add_edge(c, a, i)
 
-        path = dict()
+    #       path = dict()
 
-        def add_path(i, j):
-            s = path.get(i, None)
-            if s is None:
-                s = []
-                path[i] = s
-            s.append(j)
+    #       def add_path(i, j):
+    #           s = path.get(i, None)
+    #           if s is None:
+    #               s = []
+    #               path[i] = s
+    #           s.append(j)
 
-        def erase_path(i, j):
-            s = path[i]
-            s.remove(j)
-            if len(s) == 0:
-                del path[i]
+    #       def erase_path(i, j):
+    #           s = path[i]
+    #           s.remove(j)
+    #           if len(s) == 0:
+    #               del path[i]
 
-        start = None
-        for k, v in edges.items():
-            if len(v) == 1:
-                # border edge
-                add_path(k[0], k[1])
-                add_path(k[1], k[0])
-            elif len(v) == 2:
-                pass
-            else:
-                raise RuntimeError(f"{len(v)} triangles with edge")
+    #       start = None
+    #       for k, v in edges.items():
+    #           if len(v) == 1:
+    #               # border edge
+    #               add_path(k[0], k[1])
+    #               add_path(k[1], k[0])
+    #           elif len(v) == 2:
+    #               pass
+    #           else:
+    #               raise RuntimeError(f"{len(v)} triangles with edge")
 
-        for p in path.values():
-            assert len(p) == 2
+    #       for p in path.values():
+    #           assert len(p) == 2
 
-        start = next(iter(path.keys()))
-        j = start
-        k = path[j][0]
-        trail = [j, k]
-        while True:
-            n = path[k]
-            n = n[0] if n[1] == j else n[1]
-            if n == start:
-                break
-            trail.append(n)
-            j, k = k, n
-        assert len(path) == len(trail)
-        if True:
-            for t in trail:
-                p = points[t]
-                # flag = "" if self.is_join_point(Vertex() else " !!!"
-                # print(f"{p.x:.14f}, {p.y:.14f}, {p.z:.14f}")
-                print(p)
+    #       start = next(iter(path.keys()))
+    #       j = start
+    #       k = path[j][0]
+    #       trail = [j, k]
+    #       while True:
+    #           n = path[k]
+    #           n = n[0] if n[1] == j else n[1]
+    #           if n == start:
+    #               break
+    #           trail.append(n)
+    #           j, k = k, n
+    #       assert len(path) == len(trail)
+    #       if True:
+    #           for t in trail:
+    #               p = points[t]
+    #               # flag = "" if self.is_join_point(Vertex() else " !!!"
+    #               # print(f"{p.x:.14f}, {p.y:.14f}, {p.z:.14f}")
+    #               print(p)
 
-        with svg_writer.SVGWriter("perimeter", 50, 0.01) as ctx:
-            points = [points[t] for t in trail]
-            ctx.move_to(p[0], p[1])
-            for p in points[1:]:
-                ctx.line_to(p[0], p[1])
-            ctx.close_path()
-            ctx.stroke()
-            for p in points:
-                ctx.arc(p[0], p[1], 0.02, 0, 2 * math.pi)
-                ctx.fill()
+    #       with svg_writer.SVGWriter("perimeter", 50, 0.01) as ctx:
+    #           points = [points[t] for t in trail]
+    #           ctx.move_to(p[0], p[1])
+    #           for p in points[1:]:
+    #               ctx.line_to(p[0], p[1])
+    #           ctx.close_path()
+    #           ctx.stroke()
+    #           for p in points:
+    #               ctx.arc(p[0], p[1], 0.02, 0, 2 * math.pi)
+    #               ctx.fill()
 
     def make_model(self):
         model = mesh.Mesh(np.zeros(len(self.big_mesh), dtype=mesh.Mesh.dtype))

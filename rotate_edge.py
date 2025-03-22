@@ -1,4 +1,3 @@
-import calc
 import math
 
 
@@ -7,6 +6,7 @@ def distance(p, q):
     return math.sqrt(sum((a - b) ** 2 for a, b in zip(p, q)))
 
 
+# Tests if a, b, c, d are the consecutive vertices of a convex quadrilateral
 def is_convex_quad(a, b, c, d):
     prev2 = c
     prev = d
@@ -17,24 +17,34 @@ def is_convex_quad(a, b, c, d):
         dx1 = p[0] - prev[0]
         dy1 = p[1] - prev[1]
 
+        # Compute the cross product of two adjacent sides.
         cross = dx0 * dy1 - dy0 * dx1
+
         if abs(cross) < 1e-4:
+            # if the angle is very small, don't count the quadrilateral
+            # as convex.
             return False
+
+        # The quadrilateal is convex if all the cross products
+        # have the same sign. The sign determines whether a, b, c, d
+        # are clockwise or counterclockwise.
         s = -1 if cross < 0 else 1
         if sign is None:
             sign = s
         else:
             if sign != s:
                 return False
+
         prev2 = prev
         prev = p
-
     return True
 
 
-# Test if the triangle with vertices (p0, p1, p2) is skinny.
+# Tests if the triangle with vertices (p0, p1, p2) is skinny.
 # If so, returns the vertex (0, 1, 2) opposite the long side.
 # If not, returns -1.
+# If the triangle is isosceles there may be one long side. We
+# return one of them.
 def is_skinny(p0, p1, p2):
     d01 = distance(p0, p1)
     d12 = distance(p1, p2)
@@ -42,199 +52,216 @@ def is_skinny(p0, p1, p2):
 
     if d01 >= d12 and d01 >= d20:
         mx = d01
+        others = d12 + d20
         result = 2
     elif d12 >= d01 and d12 >= d20:
         mx = d12
+        others = d01 + d20
         result = 0
     else:
         mx = d20
+        others = d01 + d12
         result = 1
 
-    sum = d01 + d12 + d20 - mx
-    return result if sum < mx * 1.07 else -1
+    # The value 1.07 is somewhat arbitrary.
+    return result if others < mx * 1.07 else -1
 
 
-def repair_if_skinny(float_v, triangles, neighbors, t):
-    def get_neighbor(t, opposite):
-        for i, v in enumerate(triangles[t]):
-            if v == opposite:
-                return neighbors[t][i]
-        raise RuntimeError("Can't find vertex")
+# Attempts to eliminate skinny triangles.
+# If necesary and possible, updates triangles and neighbors so that
+# triangles[t] is not skinny.
+def repair_if_skinny(points, triangles, neighbors, t):
+    tri_t = triangles[t]
 
-    def replace_neighbor(t, find, replace, trace=False):
-        if trace:
-            print(f"In triangle {t} find {find} replace with {replace}")
-        if t < 0:
-            return
-        n = neighbors[t]
-        if trace:
-            print(f"Before {n}")
-        found = False
-        for i, x in enumerate(n):
-            if x == find:
-                if found:
-                    raise RuntimeError("Ambiguous replacemenet")
-                n[i] = replace
-                if trace:
-                    print(f"AfterAfter {n}")
-                found = True
-                return
-        raise RuntimeError("Can't find neighbor")
+    i0, i1, i2 = tri_t
 
-    def replace_vertex(t, find, replace):
-        if t < 0:
-            return
-        tri = triangles[t]
-        for i, x in enumerate(tri):
-            if x == find:
-                tri[i] = replace
-                return
-        raise RuntimeError("Can't find vertex")
-
-    i0, i1, i2 = triangles[t]
-
-    p0 = float_v[i0]
-    p1 = float_v[i1]
-    p2 = float_v[i2]
+    p0 = points[i0]
+    p1 = points[i1]
+    p2 = points[i2]
 
     t0 = is_skinny(p0, p1, p2)
     if t0 < 0:
         # Not skinny
         return
 
-    # t0, t1, t2 are a permutation of 0, 1, 2.
-    t1, t2 = (1, 2) if t0 == 0 else (0, 2) if t0 == 1 else (0, 1)
+    # t0, t1, t2 are a cyclic permutation of 0, 1, 2.
+    t1 = (t0 + 1) % 3
+    t2 = (t1 + 1) % 3
 
-    # The point indices of the vertices of t
+    # We attempt to flip the longest edge of the skinny triangle.
+    # This will often eliminate a skinny triangle. If flipping isn't
+    # possible for some reason, I suppose we could try to other two,
+    # but that feels like too much work.
 
-    ins = 0.3
-
-    # s is the adjacent triangle
-    s = neighbors[t][t0]
+    # s is the adjacent triangle along the longest edge of t
+    nbr_t = neighbors[t]
+    s = nbr_t[t0]
     if s < 0:
-        # Can't find adjacent triangle
+        # There is no adjacent triangle. No repair possible.
         return
 
-    i3 = None
+    tri_s = triangles[s]
+    nbr_s = neighbors[s]
 
-    i0 = triangles[t][t0]
-    i1 = triangles[t][t1]
-    i2 = triangles[t][t2]
+    # i0, i1, and i2 are the point indices of triangle t.
+    i0 = tri_t[t0]
+    i1 = tri_t[t1]
+    i2 = tri_t[t2]
+
     # Find vertex of s that is not shared by t.
-    for p in triangles[s]:
+    i3 = None
+    for i, p in enumerate(tri_s):
         if p != i1 and p != i2:
             if i3 is not None:
                 raise RuntimeError("too many i3s")
             i3 = p
+            s0 = i
     if i3 is None:
         raise RuntimeError("too many i3s")
-    # i0, i1, i3, i2 are the indices of the quatrilateral.
-    # i3, i2 is not a typo
-    p0 = float_v[i0]
-    p1 = float_v[i1]
-    p2 = float_v[i2]
-    p3 = float_v[i3]
 
-    if not is_convex_quad(p0, p1, p3, p2):
+    # s0, s1, s2 is a cyclic permuation of 0, 1, 2.
+    s1 = (s0 + 1) % 3
+    s2 = (s1 + 1) % 3
+
+    # i0, i1, i3, i2 are the indices of the quatrilateral. See below.
+    #
+    #         s2
+    #         i1
+    #        /|\
+    #    w  / | \  y
+    #      /  |  \
+    # i0  / t | s \ i3
+    # s2  \   |   / s0
+    #      \  |  /
+    #    x  \ | /  z
+    #        \|/
+    #         i2
+    #         s1
+
+    p0 = points[i0]
+    p1 = points[i1]
+    p2 = points[i2]
+    p3 = points[i3]
+
+    if not is_convex_quad(p0, p1, p3, p2):  # p3, p2 is not a typo
         # Cannot convert non-convex quadrilateral
         return
 
+    # We want to flip the vertical diagnonal to the horizontal
+    #         s2
+    #         i1
+    #        / \
+    #    w  /   \  y
+    #      /  t  \
+    # i0  /_______\ i3
+    # s2  \       / s0
+    #      \  s  /
+    #    x  \   /  z
+    #        \ /
+    #         i2
+    #         s1
+
+    # If either of the two new triangles are skinny,
+    # then give up.
     if is_skinny(p0, p1, p3) >= 0:
         return
 
+    # I suppose we could allow s to be skinny if s > t, in hopes
+    # that s could be later repaired.
     if is_skinny(p2, p0, p3) >= 0:
         return
 
-    # Perform the conversion
+    # Perform the diagonal flip.
 
     # Get all the adjacent triangles.
-    w = get_neighbor(t, i2)
-    x = get_neighbor(t, i1)
-    y = get_neighbor(s, i2)
-    z = get_neighbor(s, i1)
+    # Refer to the first of the two diagrams.
+    w = nbr_t[t2]
+    x = nbr_t[t1]
+    y = nbr_s[s1]
+    z = nbr_s[s2]
 
     # Update all the neighbors
-    trace = False
+    nbr_t[t0] = y
+    nbr_t[t1] = s
 
-    xxx = neighbors[t].tolist()
-    print (s, xxx)
-    s_slot = xxx.index(s)
-    x_slot = xxx.index(x)
-    neighbors[t][x_slot] = s
-    neighbors[t][s_slot] = y
+    nbr_s[s0] = x
+    nbr_s[s1] = t
 
-    yyy = neighbors[s].tolist()
-    t_slot = yyy.index(t)
-    y_slot = yyy.index(y)
-    neighbors[s][t_slot] = x
-    neighbors[s][y_slot] = t
+    if x >= 0:
+        neighbor_x = neighbors[x]
+        neighbor_x[neighbor_x.index(t)] = s
 
-    replace_neighbor(x, t, s, trace)
-    replace_neighbor(y, s, t, trace)
+    if y >= 0:
+        neighbor_y = neighbors[y]
+        neighbor_y[neighbor_y.index(s)] = t
 
     # Update the vertices
-    replace_vertex(t, i2, i3)
-    replace_vertex(s, i1, i0)
+    tri_t[t2] = i3
+    tri_s[s2] = i0
 
-    calc.check_neighbors(triangles, neighbors)
+    # Returns a sorted tuple
+def normalize(a, b):
+    return (a, b) if a <= b else (b, a)
 
 
-def check_edge(float_v, triangles, neighbors, t):
-    i0, i1, i2 = triangles[t]
+# Rebuilds the neighbor matrix from triangles.
+# This function is pretty fast. Perhaps we didn't really
+# need to incrementally update the neighbors above.
+def compute_neighbors(triangles):
+    edges = dict()
 
-    p0 = float_v[i0]
-    p1 = float_v[i1]
-    p2 = float_v[i2]
+    def add_edge(t, e0, e1):
+        key = normalize(e0, e1)
+        s = edges.get(key, None)
+        if s is None:
+            s = []
+            edges[key] = s
+        s.append(t)
 
-    t0 = is_skinny(p0, p1, p2)
-    if t0 < 0:
-        return None
+    for i, t in enumerate(triangles):
+        add_edge(i, t[0], t[1])
+        add_edge(i, t[1], t[2])
+        add_edge(i, t[2], t[0])
 
-    # t0, t1, t2 are a permutation of 0, 1, 2.
-    t1, t2 = (1, 2) if t0 == 0 else (0, 2) if t0 == 1 else (0, 1)
+    neighbors = [[-1, -1, -1] for _ in range(len(triangles))]
 
-    # The point indices of the vertices of t
+    def set_neighbor(t0, v, other):
+        if neighbors[t0][v] >= 0:
+            raise RuntimeError("neighbors already set")
+        neighbors[t0][v] = other
 
-    ins = 0.3
+    def other_vertex(t, e0, e1):
+        result = None
+        for i, v in enumerate(triangles[t]):
+            if v != e0 and v != e1:
+                if result is not None:
+                    raise RuntimeError("too many vertices")
+                result = i
+        if result is None:
+            raise RuntimeError("vertex not found")
+        return result
 
-    # s is the adjacent triangle
-    s = neighbors[t][t0]
-    if s < 0:
-        return (255, 128, 0, ins)
+    for key, ts in edges.items():
+        if len(ts) >= 3:
+            raise RuntimeError("too many triangles")
+        if len(ts) == 2:
+            t1, t2 = ts
+            set_neighbor(t1, other_vertex(t1, *key), t2)
+            set_neighbor(t2, other_vertex(t2, *key), t1)
 
-    i3 = None
+    return neighbors
 
-    i0 = triangles[t][t0]
-    i1 = triangles[t][t1]
-    i2 = triangles[t][t2]
-    # Find vertex of s that is not shared by t.
-    for p in triangles[s]:
-        if p != i1 and p != i2:
-            if i3 is not None:
-                raise RuntimeError("too many i3s")
-            i3 = p
-    if i3 is None:
-        raise RuntimeError("too many i3s")
-    # i0, i1, i3, i2 are the indices of the quatrilateral.
-    # i3, i2 is not a typo
-    p0 = float_v[i0]
-    p1 = float_v[i1]
-    p2 = float_v[i2]
-    p3 = float_v[i3]
 
-    if not is_convex_quad(p0, p1, p3, p2):
-        # Cannot convert non-convex quadrilateral
-        return None
-        return (255, 0, 255, ins)
+# Checks the consistency of triangles and neighbors.
+def check_neighbors(triangles, neighbors):
+    adj = compute_neighbors(triangles)
+    assert len(adj) == len(neighbors)
+    for i in range(len(adj)):
+        n = neighbors[i]
+        a = adj[i]
+        assert len(a) == len(n) == 3
+        if not all(a[i] == n[i] for i in range(3)):
+            print("Fail", i, "good", a, "bad", n)
+            # raise RuntimeError("bad neighbors")
 
-    if is_skinny(p0, p1, p3) >= 0:
-        return None
-        return (0, 255, 255, ins)
 
-    if is_skinny(p2, p0, p3) >= 0:
-        return None
-        return (0, 255, 255, ins)
-
-    # Can convert
-    print("Can convert")
-    return (255, 0, 0, ins)
