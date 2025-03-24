@@ -904,9 +904,6 @@ class Codezilla:
                 bad_triangles += 1
         print(bad_triangles, "Bad triangles")
 
-        min_area = min(t.area() for t in self.big_mesh)
-        print(f"smallest triangle is {min_area}")
-
     def poles(self, faces):
         v = self.find_vertex(faces)
         for f in faces:
@@ -1070,7 +1067,7 @@ class Codezilla:
         )
 
         Font(pen).draw(label)
-        pen.add_steiner_points(trace=i == 4)
+        pen.add_steiner_points()
         # pen.dump_data(i)
         pen.dump(i)
         pen.make_mesh(i)
