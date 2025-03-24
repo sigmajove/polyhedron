@@ -67,139 +67,166 @@ def is_skinny(p0, p1, p2):
     return result if others < mx * 1.07 else -1
 
 
-# Attempts to eliminate skinny triangles.
-# If necesary and possible, updates triangles and neighbors so that
-# triangles[t] is not skinny.
-def repair_if_skinny(points, triangles, neighbors, t):
-    tri_t = triangles[t]
+class Fixer:
+    def __init__(self):
+        self.border_triangle = 0
+        self.concave_quad = 0
+        self.skinny_quad = 0
+        self.repaired = 0
 
-    i0, i1, i2 = tri_t
+    def print_statistics(self):
+        # Hack. Counters are doubled because triangulate is called twice
+        # for each mesh
+        if self.border_triangle > 0:
+            print(f"{self.border_triangle//2} not repaired on border")
+        if self.concave_quad > 0:
+            print(
+                f"{self.concave_quad//2} not repaired in concave quadrilaterals"
+            )
+        if self.skinny_quad > 0:
+            print(
+                f"{self.skinny_quad//2} not repaired in skinny quadrilaterals"
+            )
+        if self.repaired > 0:
+            print(f"{self.repaired//2} triangles repaired")
 
-    p0 = points[i0]
-    p1 = points[i1]
-    p2 = points[i2]
+    # Attempts to eliminate skinny triangles.
+    # If necesary and possible, updates triangles and neighbors so that
+    # triangles[t] is not skinny.
+    def repair_if_skinny(self, points, triangles, neighbors, t):
+        tri_t = triangles[t]
 
-    t0 = is_skinny(p0, p1, p2)
-    if t0 < 0:
-        # Not skinny
-        return
+        i0, i1, i2 = tri_t
 
-    # t0, t1, t2 are a cyclic permutation of 0, 1, 2.
-    t1 = (t0 + 1) % 3
-    t2 = (t1 + 1) % 3
+        p0 = points[i0]
+        p1 = points[i1]
+        p2 = points[i2]
 
-    # We attempt to flip the longest edge of the skinny triangle.
-    # This will often eliminate a skinny triangle. If flipping isn't
-    # possible for some reason, I suppose we could try to other two,
-    # but that feels like too much work.
+        t0 = is_skinny(p0, p1, p2)
+        if t0 < 0:
+            # Not skinny
+            return
 
-    # s is the adjacent triangle along the longest edge of t
-    nbr_t = neighbors[t]
-    s = nbr_t[t0]
-    if s < 0:
-        # There is no adjacent triangle. No repair possible.
-        return
+        # t0, t1, t2 are a cyclic permutation of 0, 1, 2.
+        t1 = (t0 + 1) % 3
+        t2 = (t1 + 1) % 3
 
-    tri_s = triangles[s]
-    nbr_s = neighbors[s]
+        # We attempt to flip the longest edge of the skinny triangle.
+        # This will often eliminate a skinny triangle. If flipping isn't
+        # possible for some reason, I suppose we could try to other two,
+        # but that feels like too much work.
 
-    # i0, i1, and i2 are the point indices of triangle t.
-    i0 = tri_t[t0]
-    i1 = tri_t[t1]
-    i2 = tri_t[t2]
+        # s is the adjacent triangle along the longest edge of t
+        nbr_t = neighbors[t]
+        s = nbr_t[t0]
+        if s < 0:
+            # There is no adjacent triangle. No repair possible.
+            self.border_triangle += 1
+            return
 
-    # Find vertex of s that is not shared by t.
-    i3 = None
-    for i, p in enumerate(tri_s):
-        if p != i1 and p != i2:
-            if i3 is not None:
-                raise RuntimeError("too many i3s")
-            i3 = p
-            s0 = i
-    if i3 is None:
-        raise RuntimeError("too many i3s")
+        tri_s = triangles[s]
+        nbr_s = neighbors[s]
 
-    # s0, s1, s2 is a cyclic permuation of 0, 1, 2.
-    s1 = (s0 + 1) % 3
-    s2 = (s1 + 1) % 3
+        # i0, i1, and i2 are the point indices of triangle t.
+        i0 = tri_t[t0]
+        i1 = tri_t[t1]
+        i2 = tri_t[t2]
 
-    # i0, i1, i3, i2 are the indices of the quatrilateral. See below.
-    #
-    #         s2
-    #         i1
-    #        /|\
-    #    w  / | \  y
-    #      /  |  \
-    # i0  / t | s \ i3
-    # s2  \   |   / s0
-    #      \  |  /
-    #    x  \ | /  z
-    #        \|/
-    #         i2
-    #         s1
+        # Find vertex of s that is not shared by t.
+        i3 = None
+        for i, p in enumerate(tri_s):
+            if p != i1 and p != i2:
+                if i3 is not None:
+                    raise RuntimeError("too many i3s")
+                i3 = p
+                s0 = i
+        if i3 is None:
+            raise RuntimeError("too many i3s")
 
-    p0 = points[i0]
-    p1 = points[i1]
-    p2 = points[i2]
-    p3 = points[i3]
+        # s0, s1, s2 is a cyclic permuation of 0, 1, 2.
+        s1 = (s0 + 1) % 3
+        s2 = (s1 + 1) % 3
 
-    if not is_convex_quad(p0, p1, p3, p2):  # p3, p2 is not a typo
-        # Cannot convert non-convex quadrilateral
-        return
+        # i0, i1, i3, i2 are the indices of the quatrilateral. See below.
+        #
+        #         s2
+        #         i1
+        #        /|\
+        #    w  / | \  y
+        #      /  |  \
+        # i0  / t | s \ i3
+        # s2  \   |   / s0
+        #      \  |  /
+        #    x  \ | /  z
+        #        \|/
+        #         i2
+        #         s1
 
-    # We want to flip the vertical diagnonal to the horizontal
-    #         s2
-    #         i1
-    #        / \
-    #    w  /   \  y
-    #      /  t  \
-    # i0  /_______\ i3
-    # s2  \       / s0
-    #      \  s  /
-    #    x  \   /  z
-    #        \ /
-    #         i2
-    #         s1
+        p0 = points[i0]
+        p1 = points[i1]
+        p2 = points[i2]
+        p3 = points[i3]
 
-    # If either of the two new triangles are skinny,
-    # then give up.
-    if is_skinny(p0, p1, p3) >= 0:
-        return
+        if not is_convex_quad(p0, p1, p3, p2):  # p3, p2 is not a typo
+            # Cannot convert non-convex quadrilateral
+            self.concave_quad += 1
+            return
 
-    # I suppose we could allow s to be skinny if s > t, in hopes
-    # that s could be later repaired.
-    if is_skinny(p2, p0, p3) >= 0:
-        return
+        # We want to flip the vertical diagnonal to the horizontal
+        #         s2
+        #         i1
+        #        / \
+        #    w  /   \  y
+        #      /  t  \
+        # i0  /_______\ i3
+        # s2  \       / s0
+        #      \  s  /
+        #    x  \   /  z
+        #        \ /
+        #         i2
+        #         s1
 
-    # Perform the diagonal flip.
+        # If either of the two new triangles are skinny,
+        # then give up.
+        if is_skinny(p0, p1, p3) >= 0 or is_skinny(p2, p0, p3) >= 0:
+            self.skinny_quad += 1
+            return
 
-    # Get all the adjacent triangles.
-    # Refer to the first of the two diagrams.
-    w = nbr_t[t2]
-    x = nbr_t[t1]
-    y = nbr_s[s1]
-    z = nbr_s[s2]
+        # Perform the diagonal flip.
+        self.repaired += 1
 
-    # Update all the neighbors
-    nbr_t[t0] = y
-    nbr_t[t1] = s
+        # Get all the adjacent triangles.
+        # Refer to the first of the two diagrams.
+        w = nbr_t[t2]
+        x = nbr_t[t1]
+        y = nbr_s[s1]
+        z = nbr_s[s2]
 
-    nbr_s[s0] = x
-    nbr_s[s1] = t
+        # Update all the neighbors
+        nbr_t[t0] = y
+        nbr_t[t1] = s
 
-    if x >= 0:
-        neighbor_x = neighbors[x]
-        neighbor_x[neighbor_x.index(t)] = s
+        nbr_s[s0] = x
+        nbr_s[s1] = t
 
-    if y >= 0:
-        neighbor_y = neighbors[y]
-        neighbor_y[neighbor_y.index(s)] = t
+        if x >= 0:
+            neighbor_x = neighbors[x]
+            neighbor_x[neighbor_x.index(t)] = s
 
-    # Update the vertices
-    tri_t[t2] = i3
-    tri_s[s2] = i0
+        if y >= 0:
+            neighbor_y = neighbors[y]
+            neighbor_y[neighbor_y.index(s)] = t
 
-    # Returns a sorted tuple
+        # Update the vertices
+        tri_t[t2] = i3
+        tri_s[s2] = i0
+
+    def remove_very_obtuse_triangles(self, points, triangles, neighbors):
+        for i in range(len(triangles)):
+            self.repair_if_skinny(points, triangles, neighbors, i)
+
+
+# Returns a sorted tuple
 def normalize(a, b):
     return (a, b) if a <= b else (b, a)
 
@@ -263,5 +290,3 @@ def check_neighbors(triangles, neighbors):
         if not all(a[i] == n[i] for i in range(3)):
             print("Fail", i, "good", a, "bad", n)
             # raise RuntimeError("bad neighbors")
-
-

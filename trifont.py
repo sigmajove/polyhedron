@@ -413,7 +413,7 @@ class DigitPen:
 
         print(f"Wrote {filename}")
 
-    def triangulate(self, lower, tag=None):
+    def triangulate(self, fixer, lower, tag=None):
         result = triangle.triangulate(
             {
                 "vertices": self.points,
@@ -437,8 +437,7 @@ class DigitPen:
         # Delaunay triangulation works pretty well, but sometimes it
         # can produce triangles that Blender's 3D print toolkit flags as
         # being too skinny. Locate and repair skinny triangle, where possible.
-        for i in range(len(triangles)):
-            rotate_edge.repair_if_skinny(points, triangles, neighbors, i)
+        fixer.remove_very_obtuse_triangles(points, triangles, neighbors)
 
         # Make sure rotate_edge didn't mess up the neighbors.
         rotate_edge.check_neighbors(triangles, neighbors)
@@ -479,11 +478,11 @@ class DigitPen:
             (p[1] + self.y_offset) * self.scale,
         )
 
-    def dump(self, i):
+    def dump(self, i, fixer):
         filename = f"tile{i:02d}"
         with svg_writer.SVGWriter(filename, 25, 1) as ctx:
             ctx.set_line_width(0.001)
-            points, triangles, _ = self.triangulate(lower=False)
+            points, triangles, _ = self.triangulate(fixer, lower=False)
 
             ctx.set_source_rgb(0, 0, 0)
             for t in triangles:
@@ -493,7 +492,7 @@ class DigitPen:
                 ctx.close_path()
                 ctx.stroke()
 
-            points, triangles, _ = self.triangulate(lower=True)
+            points, triangles, _ = self.triangulate(fixer, lower=True)
 
             ctx.set_source_rgb(0, 0, 0)
             for t in triangles:
@@ -518,12 +517,12 @@ class DigitPen:
 
             print(f"Wrote out {filename}")
 
-    def make_mesh(self, i):
+    def make_mesh(self, fixer, i):
         upper_points, upper_triangles, upper_boundary = self.triangulate(
-            lower=False, tag=f"upper{i:02d}"
+            fixer, lower=False, tag=f"upper{i:02d}"
         )
         lower_points, lower_triangles, lower_boundary = self.triangulate(
-            lower=True, tag=f"lower{i:02d}"
+            fixer, lower=True, tag=f"lower{i:02d}"
         )
 
         num_triangles = len(upper_triangles) + len(lower_triangles)
@@ -692,8 +691,10 @@ class DigitPen:
 
 def main():
     c = Codezilla()
+    fixer = rotate_edge.Fixer()
     for i in range(18):
-        c.print_digit(i)
+        c.print_digit(i, fixer)
+    fixer.print_statistics()
     c.check_mesh()
     c.make_model()
 
@@ -1050,7 +1051,7 @@ class Codezilla:
         )
         return inflated.move(Vertex(*self.poly[i][3]))
 
-    def print_digit(self, i):
+    def print_digit(self, i, fixer):
         label = LABELS[i]
         dimension = Font(DummyPen()).draw(label)
         text_height = 0.9  # Warning: dependent on size of die
@@ -1069,8 +1070,8 @@ class Codezilla:
         Font(pen).draw(label)
         pen.add_steiner_points()
         # pen.dump_data(i)
-        pen.dump(i)
-        pen.make_mesh(i)
+        pen.dump(i, fixer)
+        pen.make_mesh(fixer, i)
 
 
 main()
