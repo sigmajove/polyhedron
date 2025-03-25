@@ -105,7 +105,7 @@ class DummyPen:
     def advance(self, x):
         pass
 
-    def close_path(self, hole, inner):
+    def close_path(self, lower, inner):
         pass
 
 
@@ -188,7 +188,7 @@ class DigitPen:
         # note self.current begins and ends with border[0]
         # Don't use ClosePath to mark the inner point because
         # it will adjust it.
-        self.close_path(hole=False, inner=None)
+        self.close_path(lower=False, inner=None)
 
     def move_to(self, p):
         self.current = [self.adjust(p)]
@@ -250,9 +250,9 @@ class DigitPen:
             prev = self.current[-1]
             self.current.append(p)
 
-    def close_path(self, hole, inner):
+    def close_path(self, lower, inner):
         if inner is not None:
-            (self.lower if hole else self.upper).append(self.adjust(inner))
+            (self.lower if lower else self.upper).append(self.adjust(inner))
 
         if len(self.current) >= 2:
             assert self.current[0] == self.current[-1]
@@ -265,12 +265,13 @@ class DigitPen:
             after = len(self.segments)
         self.current = []
 
-    def triangulate(self, fixer, PARM, tag=None):
+    def triangulate(self, fixer, upper, tag=None):
         result = triangle.triangulate(
             {
                 "vertices": self.points,
                 "segments": self.segments,
-                "holes": self.lower if PARM else self.upper,
+                # Note: holes specify the regions that get omitted.
+                "holes": self.lower if upper else self.upper,
             },
             opts="pnq10",
         )
@@ -294,7 +295,8 @@ class DigitPen:
             {
                 "vertices": self.points + keep_steiner,
                 "segments": self.segments,
-                "holes": self.lower if PARM else self.upper,
+                # Note: holes specify the region that don't get included
+                "holes": self.lower if upper else self.upper,
             },
             opts="pn",
         )
@@ -338,7 +340,7 @@ class DigitPen:
                             raise RuntimeError(
                                 "Triangle has more than three neighbors"
                             )
-                    if PARM:
+                    if upper:
                         # Use clockwise order
                         edge = (edge[1], edge[0])
                     boundaries.append(edge)
@@ -359,7 +361,7 @@ class DigitPen:
         filename = f"tile{i:02d}"
         with svg_writer.SVGWriter(filename, 25, 1) as ctx:
             ctx.set_line_width(0.001)
-            points, triangles, _ = self.triangulate(fixer, PARM=False)
+            points, triangles, _ = self.triangulate(fixer, upper=False)
 
             ctx.set_source_rgb(0, 0, 0)
             for i, t in enumerate(triangles):
@@ -377,7 +379,7 @@ class DigitPen:
                 ctx.close_path()
                 ctx.stroke()
 
-            points, triangles, _ = self.triangulate(fixer, PARM=True)
+            points, triangles, _ = self.triangulate(fixer, upper=True)
 
             ctx.set_source_rgb(0, 0, 0)
             for i, t in enumerate(triangles):
@@ -392,10 +394,10 @@ class DigitPen:
     def make_mesh(self, fixer, i):
         trace = i == 3
         lower_points, lower_triangles, lower_boundary = self.triangulate(
-            fixer, PARM=False, tag=f"upper{i:02d}"
+            fixer, upper=False, tag=f"upper{i:02d}"
         )
         upper_points, upper_triangles, upper_boundary = self.triangulate(
-            fixer, PARM=True, tag=f"lower{i:02d}"
+            fixer, upper=True, tag=f"lower{i:02d}"
         )
         if trace:
             with svg_writer.SVGWriter("debug", 50, 0.01) as ctx:
