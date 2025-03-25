@@ -11,7 +11,7 @@ import math
 import svg_writer
 import triangle
 import numpy as np
-import rotate_edge
+import fixer
 
 # Maps the internal numbering used by poly18 for the faces to the
 # numbers we want inscribed on each face.
@@ -476,10 +476,10 @@ class DigitPen:
 
 def main():
     c = Codezilla()
-    fixer = rotate_edge.Fixer()
+    f = fixer.Fixer()
     for i in range(18):
-        c.print_digit(i, fixer)
-    fixer.print_statistics()
+        c.print_digit(i, f)
+    f.print_statistics()
     c.check_mesh()
     c.make_model()
 
