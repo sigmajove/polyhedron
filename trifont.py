@@ -364,7 +364,8 @@ class DigitPen:
             points, triangles, _ = self.triangulate(fixer, upper=False)
 
             ctx.set_source_rgb(0, 0, 0)
-            for i, t in enumerate(triangles):
+            for t in triangles:
+                # Shade the region that is at the lower level.
                 ctx.move_to(*points[t[0]])
                 ctx.line_to(*points[t[1]])
                 ctx.line_to(*points[t[2]])
@@ -382,8 +383,7 @@ class DigitPen:
             points, triangles, _ = self.triangulate(fixer, upper=True)
 
             ctx.set_source_rgb(0, 0, 0)
-            for i, t in enumerate(triangles):
-
+            for t in triangles:
                 ctx.move_to(*points[t[0]])
                 ctx.line_to(*points[t[1]])
                 ctx.line_to(*points[t[2]])
