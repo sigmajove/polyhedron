@@ -265,7 +265,7 @@ class DigitPen:
             after = len(self.segments)
         self.current = []
 
-    def triangulate(self, fixer, upper, tag=None):
+    def triangulate(self, fixer, upper):
         result = triangle.triangulate(
             {
                 "vertices": self.points,
@@ -393,11 +393,11 @@ class DigitPen:
 
     def make_mesh(self, fixer, i):
         trace = i == 3
-        lower_points, lower_triangles, lower_boundary = self.triangulate(
-            fixer, upper=False, tag=f"upper{i:02d}"
-        )
         upper_points, upper_triangles, upper_boundary = self.triangulate(
-            fixer, upper=True, tag=f"lower{i:02d}"
+            fixer, upper=True
+        )
+        lower_points, lower_triangles, lower_boundary = self.triangulate(
+            fixer, upper=False
         )
         if trace:
             with svg_writer.SVGWriter("debug", 50, 0.01) as ctx:
