@@ -7,11 +7,11 @@ from poly18 import poly18
 from scipy.interpolate import BSpline
 from stl import mesh
 import copy
+import fixer
 import math
+import numpy
 import svg_writer
 import triangle
-import numpy as np
-import fixer
 
 # Maps the internal numbering used by poly18 for the faces to the
 # numbers we want inscribed on each face.
@@ -210,10 +210,12 @@ class DigitPen:
         self.current.append(r1)
 
     # Quadratic B-spline
+    # These come from reverse-engineered TrueType fonts.
     def curve_to(self, on, off):
         self.b_spline(self.current[-1], self.adjust(off), self.adjust(on))
 
     # Cubic B-spline
+    # These come from reverse-engineered Cairo output.
     def cubic(self, a, b, c):
         self.b_spline(
             self.current[-1], self.adjust(a), self.adjust(b), self.adjust(c)
@@ -222,21 +224,21 @@ class DigitPen:
     def b_spline(self, *args):
         k = len(args) - 1
         spline = BSpline(
-            np.concatenate(
+            numpy.concatenate(
                 [
-                    np.zeros(k),
-                    np.linspace(0, 1, 2),
-                    np.ones(k),
+                    numpy.zeros(k),
+                    numpy.linspace(0, 1, 2),
+                    numpy.ones(k),
                 ]
             ),
-            np.array(args),
+            numpy.array(args),
             k,
         )
 
         # Approximate the length of the curve using eight segments.
         length = 0
         prev = self.current[-1]
-        for x, y in spline(np.linspace(0, 1, 8))[1:]:
+        for x, y in spline(numpy.linspace(0, 1, 8))[1:]:
             p = (float(x), float(y))
             length += distance(p, prev)
             prev = p
@@ -245,7 +247,7 @@ class DigitPen:
         # have length approximately STEP
         num_segments = math.ceil(length / STEP)
 
-        for x, y in spline(np.linspace(0, 1, num_segments))[1:]:
+        for x, y in spline(numpy.linspace(0, 1, num_segments))[1:]:
             p = (float(x), float(y))
             prev = self.current[-1]
             self.current.append(p)
@@ -571,7 +573,9 @@ class BuildModel:
         return v if c is None else c
 
     def make_model(self):
-        model = mesh.Mesh(np.zeros(len(self.big_mesh), dtype=mesh.Mesh.dtype))
+        model = mesh.Mesh(
+            numpy.zeros(len(self.big_mesh), dtype=mesh.Mesh.dtype)
+        )
         for i, t in enumerate(self.big_mesh):
             model.vectors[i][0] = t.p0.value()
             model.vectors[i][1] = t.p1.value()
