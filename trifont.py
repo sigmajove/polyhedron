@@ -105,7 +105,7 @@ class DummyPen:
     def advance(self, x):
         pass
 
-    def close_path(self, hole=False, inner=None):
+    def close_path(self, hole, inner):
         pass
 
 
@@ -250,7 +250,7 @@ class DigitPen:
             prev = self.current[-1]
             self.current.append(p)
 
-    def close_path(self, hole=False, inner=None):
+    def close_path(self, hole, inner):
         if inner is not None:
             (self.lower if hole else self.upper).append(self.adjust(inner))
 
@@ -265,12 +265,12 @@ class DigitPen:
             after = len(self.segments)
         self.current = []
 
-    def triangulate(self, fixer, lower, tag=None):
+    def triangulate(self, fixer, PARM, tag=None):
         result = triangle.triangulate(
             {
                 "vertices": self.points,
                 "segments": self.segments,
-                "holes": self.lower if lower else self.upper,
+                "holes": self.lower if PARM else self.upper,
             },
             opts="pnq10",
         )
@@ -294,7 +294,7 @@ class DigitPen:
             {
                 "vertices": self.points + keep_steiner,
                 "segments": self.segments,
-                "holes": self.lower if lower else self.upper,
+                "holes": self.lower if PARM else self.upper,
             },
             opts="pn",
         )
@@ -338,7 +338,7 @@ class DigitPen:
                             raise RuntimeError(
                                 "Triangle has more than three neighbors"
                             )
-                    if lower:
+                    if PARM:
                         # Use clockwise order
                         edge = (edge[1], edge[0])
                     boundaries.append(edge)
@@ -359,7 +359,7 @@ class DigitPen:
         filename = f"tile{i:02d}"
         with svg_writer.SVGWriter(filename, 25, 1) as ctx:
             ctx.set_line_width(0.001)
-            points, triangles, _ = self.triangulate(fixer, lower=False)
+            points, triangles, _ = self.triangulate(fixer, PARM=False)
 
             ctx.set_source_rgb(0, 0, 0)
             for i, t in enumerate(triangles):
@@ -377,7 +377,7 @@ class DigitPen:
                 ctx.close_path()
                 ctx.stroke()
 
-            points, triangles, _ = self.triangulate(fixer, lower=True)
+            points, triangles, _ = self.triangulate(fixer, PARM=True)
 
             ctx.set_source_rgb(0, 0, 0)
             for i, t in enumerate(triangles):
@@ -392,10 +392,10 @@ class DigitPen:
     def make_mesh(self, fixer, i):
         trace = i == 3
         lower_points, lower_triangles, lower_boundary = self.triangulate(
-            fixer, lower=False, tag=f"upper{i:02d}"
+            fixer, PARM=False, tag=f"upper{i:02d}"
         )
         upper_points, upper_triangles, upper_boundary = self.triangulate(
-            fixer, lower=True, tag=f"lower{i:02d}"
+            fixer, PARM=True, tag=f"lower{i:02d}"
         )
         if trace:
             with svg_writer.SVGWriter("debug", 50, 0.01) as ctx:

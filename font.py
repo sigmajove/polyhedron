@@ -11,8 +11,8 @@ class Font:
     # of what was drawn.
 
     # The order of the closed paths (clockwise or counterclockwise)
-    # does not seem to matter. The holes come before the islands,
-    # as sort of a reverse-polish notation.
+    # does not matter to Jonathan Richard Shewchuk's Triangle API.
+    # It doesn't care what order the segments are presented.
 
     def d0(self):
         self.pen.move_to((706.00, 747.00))
@@ -309,7 +309,7 @@ class Font:
         self.pen.curve_to((radius, 2 * radius), (2 * radius, 2 * radius))
         self.pen.curve_to((0, radius), (0, 2 * radius))
         self.pen.curve_to((radius, 0), (0, 0))
-        self.pen.close_path(inner=(radius, radius))
+        self.pen.close_path(hole=False, inner=(radius, radius))
         return (2 * radius, 2 * radius)
 
     def dot(self):
