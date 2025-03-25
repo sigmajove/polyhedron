@@ -74,17 +74,11 @@ def is_convex_quad(a, b, c, d):
     return True
 
 
-TRIANGLE_COUNTER = 0
-
-
 class Triangle:
     def __init__(self, p, q, r):
-        global TRIANGLE_COUNTER
         self.p0 = p
         self.p1 = q
         self.p2 = r
-        self.id = TRIANGLE_COUNTER
-        TRIANGLE_COUNTER += 1
 
     def area(self):
         v1 = self.p1 - self.p0
@@ -831,7 +825,6 @@ class Codezilla:
                 if s is None:
                     s = []
                     edges[key] = s
-                s.append(t.id)
 
             add_triangle(normalize(t.p0, t.p1))
             add_triangle(normalize(t.p1, t.p2))
