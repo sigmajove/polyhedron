@@ -496,16 +496,6 @@ def internal_points(r0, r1):
         yield (mx, my, mz)
 
 
-def internal_points_2d(r0, r1):
-    n = math.ceil(distance(r0, r1) / (10 * STEP))
-    dx = r1[0] - r0[0]
-    dy = r1[1] - r0[1]
-    for i in range(1, n):
-        mx = r0[0] + (i * dx) / n
-        my = r0[1] + (i * dy) / n
-        yield (mx, my)
-
-
 class Codezilla:
     def __init__(self):
         self.poly = poly18()
