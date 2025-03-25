@@ -357,7 +357,7 @@ class DigitPen:
             (p[1] + self.y_offset) * self.scale,
         )
 
-    def dump(self, i, fixer):
+    def write_tile(self, i, fixer):
         filename = f"tile{i:02d}"
         with svg_writer.SVGWriter(filename, 25, 1) as ctx:
             ctx.set_line_width(0.001)
@@ -768,7 +768,7 @@ class BuildModel:
         )
 
         Font(pen).draw(label)
-        pen.dump(i, fixer)
+        pen.write_tile(i, fixer)
         pen.make_mesh(fixer, i)
 
 
