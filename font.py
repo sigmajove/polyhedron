@@ -37,9 +37,6 @@ class Font:
         self.pen.curve_to((1000.00, 747.00), (1000.00, 1106.00))
         self.pen.close_path(hole=True, inner=(989.69, 709.84))
 
-        self.pen.add_steiner((500, 450))
-        self.pen.add_steiner((500, 750))
-        self.pen.add_steiner((500, 1050))
         return (1000.00, 1496.00)
 
     def d1(self):
@@ -81,7 +78,6 @@ class Font:
         self.pen.line_to((0.00, 0.00))
         self.pen.curve_to((67.00, 321.00), (4.00, 192.00))
         self.pen.close_path(hole=True, inner=(85.51, 337.35))
-        self.pen.add_steiner((500, 977))
         return (993.00, 1496.00)
 
     def d3(self):
@@ -115,8 +111,6 @@ class Font:
         self.pen.curve_to((70.00, 201.00), (190.00, 0.00))
         self.pen.curve_to((0.00, 481.00), (7.00, 308.00))
         self.pen.line_to((280.00, 481.00))
-        self.pen.add_steiner((500, 1000))
-        self.pen.add_steiner((500, 400))
         self.pen.close_path(hole=True, inner=(389.12, 680.02))
         return (1003.00, 1496.00)
 
@@ -178,7 +172,6 @@ class Font:
         self.pen.curve_to((148.00, 109.00), (281.00, 0.00))
         self.pen.curve_to((0.00, 424.00), (15.00, 220.00))
         self.pen.line_to((284.00, 424.00))
-        self.pen.add_steiner((500, 500))
         self.pen.close_path(hole=True, inner=(296.4, 662.88))
         return (1003.00, 1496.00)
 
@@ -192,7 +185,6 @@ class Font:
         self.pen.curve_to((499.00, 749.00), (589.00, 749.00))
         self.pen.curve_to((370.00, 705.00), (426.00, 749.00))
         self.pen.curve_to((286.00, 495.00), (286.00, 640.00))
-        self.pen.add_steiner((499, 487))
         self.pen.close_path(hole=False, inner=(297.67, 533.88))
 
         self.pen.move_to((0, 689))
@@ -243,7 +235,6 @@ class Font:
         self.pen.curve_to((505.00, 1263.00), (592.00, 1263.00))
         self.pen.curve_to((370.50, 1214.50), (419.00, 1263.00))
         self.pen.curve_to((322.00, 1080.00), (322.00, 1166.00))
-        self.pen.add_steiner((505, 1080))
         self.pen.close_path(hole=False, inner=(334.9, 1119.05))
 
         self.pen.move_to((296, 457))
@@ -255,7 +246,6 @@ class Font:
         self.pen.curve_to((505.00, 683.00), (601.00, 683.00))
         self.pen.curve_to((352.50, 625.50), (409.00, 683.00))
         self.pen.curve_to((296.00, 457.00), (296.00, 568.00))
-        self.pen.add_steiner((505, 457))
         self.pen.close_path(hole=False, inner=(307.53, 491.58))
 
         self.pen.move_to((218.00, 808.00))
@@ -289,7 +279,6 @@ class Font:
         self.pen.curve_to((496.00, 1260.00), (596.00, 1260.00))
         self.pen.curve_to((371.00, 1219.00), (423.00, 1260.00))
         self.pen.curve_to((289.00, 1002.00), (289.00, 1155.00))
-        self.pen.add_steiner((496, 993))
         self.pen.close_path(hole=False, inner=(300.25, 1038.12))
 
         self.pen.move_to((484.00, 1496.00))
@@ -338,7 +327,6 @@ class Font:
             (121.410156, -6.69875), (178.589844, -6.69875), (225, 20.09625)
         )
         self.pen.cubic((271.410156, 46.891094), (300, 96.410156), (300, 150))
-        self.pen.add_steiner((radius, radius))
         self.pen.close_path(hole=True, inner=(radius, radius))
         return (2 * radius, 2 * radius)
 

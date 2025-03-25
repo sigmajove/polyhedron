@@ -8,7 +8,6 @@ from scipy.interpolate import BSpline
 from stl import mesh
 import copy
 import math
-import random
 import svg_writer
 import triangle
 import numpy as np
@@ -103,9 +102,6 @@ class DummyPen:
     def cubic(self, p, q, r):
         pass
 
-    def add_steiner(self, p):
-        pass
-
     def advance(self, x):
         pass
 
@@ -145,10 +141,6 @@ class DigitPen:
         self.zilla = zilla
         self.upper = []
         self.lower = []
-
-        self.manual_steiner = []
-        self.raw_steiner = []
-        self.disqualifiers = set()
 
         # Record the constructor parameters.
         # We use the border to determine whether random Steiner points
@@ -257,35 +249,10 @@ class DigitPen:
         # have length approximately STEP
         num_segments = math.ceil(length / STEP)
 
-        counter = 0
         for x, y in spline(np.linspace(0, 1, num_segments))[1:]:
             p = (float(x), float(y))
             prev = self.current[-1]
             self.current.append(p)
-
-            # On every third segment, add two Steiner points on either side of
-            # the segment.
-            # The pattern is O O X O O
-            if counter == 2:
-                # Add Steiner points
-                dist = distance(p, prev)
-                mid = midpoint(p, prev)
-
-                # The Steiner points at the ends of vectors of length
-                # 6 * STEP, extending from the midpoint of the segment
-                # perpendicular to the segment.
-                cos = (p[0] - prev[0]) / dist
-                sin = (p[1] - prev[1]) / dist
-                parm = 2
-                self.add_raw_steiner(
-                    (mid[0] - sin * parm * STEP, mid[1] + cos * parm * STEP)
-                )
-                self.add_raw_steiner(
-                    (mid[0] + sin * parm * STEP, mid[1] - cos * parm * STEP)
-                )
-            counter += 1
-            if counter == 4:
-                counter = 0
 
     def close_path(self, hole=False, inner=None):
         if inner is not None:
@@ -473,21 +440,6 @@ class DigitPen:
                 ctx.close_path()
                 ctx.stroke()
 
-            ctx.set_source_rgb(1, 0, 0)
-            for s in self.manual_steiner:
-                ctx.arc(*s, 0.005, 0, 2 * math.pi)
-                ctx.fill()
-
-            ctx.set_source_rgb(0, 0, 1)
-            for s in self.raw_steiner:
-                ctx.arc(*s, 0.005, 0, 2 * math.pi)
-                ctx.fill()
-
-            ctx.set_source_rgb(0, 1, 0)
-            for s in self.disqualifiers:
-                ctx.arc(*s, 0.005, 0, 2 * math.pi)
-                ctx.fill()
-
             if has_weird:
                 print("Has weird")
             print(f"Wrote out {filename}")
@@ -596,109 +548,6 @@ class DigitPen:
                 return False
             prev = z
         return True
-
-    def add_raw_steiner(self, p):
-        return
-        if self.is_legal_steiner(p) and self.not_too_close(p):
-            self.points.append(p)
-            self.raw_steiner.append(p)
-
-    def force_raw_steiner(self, p):
-        return
-        if self.is_legal_steiner(p):
-            self.points.append(p)
-
-    def add_steiner(self, p):
-        return
-        a = self.adjust(p)
-        self.manual_steiner.append(a)
-        self.force_raw_steiner(a)
-
-    def not_too_close(self, p):
-        min_dist = math.inf
-        for q in self.points:
-            dist = distance(q, p)
-            if dist < min_dist:
-                min_dist = dist
-                disqualifier = q
-        if min_dist <= 0.05:
-            self.disqualifiers.add(tuple(disqualifier))
-            return False
-        return True
-
-    def add_steiner_points(self, trace=False):
-        return
-        if trace:
-            print("Tracing steiner")
-            min_dist = math.inf
-        min_x = min(p[0] for p in self.border)
-        max_x = max(p[0] for p in self.border)
-        min_y = min(p[1] for p in self.border)
-        max_y = max(p[1] for p in self.border)
-        x_range = max_x - min_x
-        y_range = max_y - min_y
-        gran = 5
-        x_buck = lambda x: min(
-            gran - 1, math.floor(gran * (x - min_x) / x_range)
-        )
-        y_buck = lambda y: min(
-            gran - 1, math.floor(gran * (y - min_y) / y_range)
-        )
-
-        buckets = [[[] for j in range(gran)] for i in range(gran)]
-
-        def add_to_bucket(s):
-            buckets[y_buck(s[1])][x_buck(s[0])].append(s)
-
-        for p in self.points:
-            add_to_bucket(p)
-
-        # generates the distances to all the points in adjacent buckets
-        def dist_near(p):
-            xb = x_buck(p[0])
-            yb = y_buck(p[1])
-            x_lo = max(0, xb - 1)
-            x_hi = min(gran - 1, xb + 1)
-            y_lo = max(0, yb - 1)
-            y_hi = min(gran - 1, yb + 1)
-            for x in range(x_lo, x_hi + 1):
-                for y in range(y_lo, y_hi + 1):
-                    for s in buckets[y][x]:
-                        yield distance(s, p)
-
-        random.seed(12345)
-        rand_point = lambda: (
-            random.uniform(min_x, max_x),
-            random.uniform(min_y, max_y),
-        )
-        num_points = 0
-        miss = 0
-        thresh = 100
-        while True:
-            p = rand_point()
-            if not self.is_legal_steiner(p):
-                continue
-
-            if self.not_too_close(p):
-                if trace:
-                    dist = min(
-                        (distance(q, p) for q in self.points), default=math.inf
-                    )
-                    if dist < min_dist:
-                        min_dist = dist
-                self.points.append(p)
-                add_to_bucket(p)
-                num_points += 1
-                if num_points > thresh:
-                    thresh += 100
-                miss = 0
-            else:
-                miss += 1
-                if miss > 100:
-                    break
-
-        if trace:
-            print(f"Minimum Steiner dist {min_dist}")
 
 
 def main():
@@ -1002,7 +851,6 @@ class Codezilla:
         )
 
         Font(pen).draw(label)
-        pen.add_steiner_points()
         # pen.dump_data(i)
         pen.dump(i, fixer)
         pen.make_mesh(fixer, i)
