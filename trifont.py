@@ -7,11 +7,11 @@ from poly18 import poly18
 from scipy.interpolate import BSpline
 from stl import mesh
 import copy
+import fixer
 import math
+import numpy as np
 import svg_writer
 import triangle
-import numpy as np
-import fixer
 
 # Maps the internal numbering used by poly18 for the faces to the
 # numbers we want inscribed on each face.
