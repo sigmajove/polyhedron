@@ -428,8 +428,8 @@ class DigitPen:
 
         num_triangles = len(lower_triangles) + len(upper_triangles)
 
-        # The combined points will be upper + lower
-        def to_lower(p):
+        # The combined points will be lower + upper
+        def to_upper(p):
             return p + len(lower_points)
 
         combined_points = []
@@ -440,21 +440,25 @@ class DigitPen:
 
         mesh_triangles = [t for t in lower_triangles]
         for t in upper_triangles:
-            mesh_triangles.append(tuple([to_lower(p) for p in t]))
+            mesh_triangles.append(tuple([to_upper(p) for p in t]))
 
         for e in set(lower_boundary) & set(upper_boundary):
             #  u0 -- u1
-            #  |    / |
-            #  |   /  |
-            #  |  /   |
-            #  | /    |
+            #  | \    |
+            #  |  \   |
+            #  |   \  |
+            #  |    \ |
             #  l0 --- l1
-            u0 = e[0]
-            u1 = e[1]
-            l0 = to_lower(e[0])
-            l1 = to_lower(e[1])
-            mesh_triangles.append((u0, l0, u1))
-            mesh_triangles.append((l0, l1, u1))
+            l0 = e[0]
+            l1 = e[1]
+            u0 = to_upper(e[0])
+            u1 = to_upper(e[1])
+
+            # This is a very delicate opertion. Order matters.
+            # I wish I had a better explanation, but the model builders
+            # don't complain.
+            mesh_triangles.append((l0, u0, l1))
+            mesh_triangles.append((u0, u1, l1))
             num_triangles += 2
 
         # Translate the 2d triangulation back to its
