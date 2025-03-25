@@ -220,6 +220,21 @@ def normalize(a, b):
     return (a, b) if a <= b else (b, a)
 
 
+# Determines if the point p is on the line_segment ab, within floating point rounding error.
+def on_segment(p, a, b):
+    def between(p, x, y):
+        return x <= p <= y or x >= p >= y
+
+    # Test if p is in the bounding box containing (a, b)
+    if not all(between(p[i], a[i], b[i]) for i in range(2)):
+        return False
+
+    # Test if the line from b to a has the same slope as the line from p to a.
+    return math.isclose(
+        (b[1] - a[1]) * (p[0] - a[0]), (b[0] - a[0]) * (p[1] - a[1])
+    )
+
+
 class DigitPen:
     def __init__(self, faceno, border, scale, x_offset, y_offset, zilla):
         self.faceno = faceno
@@ -228,6 +243,8 @@ class DigitPen:
         self.lower = []
 
         self.manual_steiner = []
+        self.raw_steiner = []
+        self.disqualifiers = set()
 
         # Record the constructor parameters.
         # We use the border to determine whether random Steiner points
@@ -420,12 +437,36 @@ class DigitPen:
                 "segments": self.segments,
                 "holes": self.lower if lower else self.upper,
             },
+            opts="pnq10",
+        )
+
+        # Find all the Steiner points added by the q option.
+        in_points = set(tuple(p) for p in self.points)
+        out_points = set((float(p[0]), float(p[1])) for p in result["vertices"])
+
+        # Remove all the Steiner points that are on segments.
+        # They cause trouble when building the net.
+        keep_steiner = []
+        for p in out_points - in_points:
+            if not any(
+                on_segment(p, self.points[s[0]], self.points[s[1]])
+                for s in self.segments
+            ):
+                keep_steiner.append(p)
+
+        # Rebuild the triangulation using just the allowed Steiner points.
+        result = triangle.triangulate(
+            {
+                "vertices": self.points + keep_steiner,
+                "segments": self.segments,
+                "holes": self.lower if lower else self.upper,
+            },
             opts="pn",
         )
 
         # The results returned by triangle.triangulate use weird numpy
         # types for the coordinates. To avoid surprises, convert
-        # everything to native Pyghon types.
+        # everything to native Python types.
         points = [(float(p[0]), float(p[1])) for p in result["vertices"]]
         triangles = [
             [int(t[0]), int(t[1]), int(t[2])] for t in result["triangles"]
@@ -480,12 +521,25 @@ class DigitPen:
 
     def dump(self, i, fixer):
         filename = f"tile{i:02d}"
+        has_weird = False
         with svg_writer.SVGWriter(filename, 25, 1) as ctx:
             ctx.set_line_width(0.001)
             points, triangles, _ = self.triangulate(fixer, lower=False)
+            neighbors = rotate_edge.compute_neighbors(triangles)
 
             ctx.set_source_rgb(0, 0, 0)
-            for t in triangles:
+            for i, t in enumerate(triangles):
+                if rotate_edge.is_weird(points, triangles, neighbors, i):
+                    has_weird = True
+                    ctx.save()
+                    ctx.set_source_rgba(0, 1, 0, 0.6)
+                    ctx.move_to(*points[t[0]])
+                    ctx.line_to(*points[t[1]])
+                    ctx.line_to(*points[t[2]])
+                    ctx.close_path()
+                    ctx.fill()
+                    ctx.restore()
+
                 ctx.move_to(*points[t[0]])
                 ctx.line_to(*points[t[1]])
                 ctx.line_to(*points[t[2]])
@@ -493,14 +547,19 @@ class DigitPen:
                 ctx.stroke()
 
             points, triangles, _ = self.triangulate(fixer, lower=True)
+            neighbors = rotate_edge.compute_neighbors(triangles)
 
             ctx.set_source_rgb(0, 0, 0)
-            for t in triangles:
+            for i, t in enumerate(triangles):
                 ctx.move_to(*points[t[0]])
                 ctx.line_to(*points[t[1]])
                 ctx.line_to(*points[t[2]])
                 ctx.close_path()
-                ctx.set_source_rgba(1, 0, 0, 0.6)
+                if rotate_edge.is_weird(points, triangles, neighbors, i):
+                    has_weird = True
+                    ctx.set_source_rgba(0, 1, 0, 0.6)
+                else:
+                    ctx.set_source_rgba(1, 0, 0, 0.6)
                 ctx.fill()
                 ctx.set_source_rgb(0, 0, 0)
 
@@ -515,15 +574,52 @@ class DigitPen:
                 ctx.arc(*s, 0.005, 0, 2 * math.pi)
                 ctx.fill()
 
+            ctx.set_source_rgb(0, 0, 1)
+            for s in self.raw_steiner:
+                ctx.arc(*s, 0.005, 0, 2 * math.pi)
+                ctx.fill()
+
+            ctx.set_source_rgb(0, 1, 0)
+            for s in self.disqualifiers:
+                ctx.arc(*s, 0.005, 0, 2 * math.pi)
+                ctx.fill()
+
+            if has_weird:
+                print("Has weird")
             print(f"Wrote out {filename}")
 
     def make_mesh(self, fixer, i):
+        trace = i == 3
         upper_points, upper_triangles, upper_boundary = self.triangulate(
             fixer, lower=False, tag=f"upper{i:02d}"
         )
         lower_points, lower_triangles, lower_boundary = self.triangulate(
             fixer, lower=True, tag=f"lower{i:02d}"
         )
+        if trace:
+            with svg_writer.SVGWriter("debug", 50, 0.01) as ctx:
+                bpoints = set()
+                for e, f in upper_boundary:
+                    bpoints.add(e)
+                    bpoints.add(f)
+                min_y = math.inf
+                for p in bpoints:
+                    xx = upper_points[p]
+                    ctx.arc(*xx, 0.01, 0, 2 * math.pi)
+                    min_y = min(min_y, xx[1])
+                    ctx.set_source_rgb(1, 0, 0)
+                    ctx.fill()
+
+                min_y -= 0.5
+                bpoints = set()
+                for e, f in lower_boundary:
+                    bpoints.add(e)
+                    bpoints.add(f)
+                for p in bpoints:
+                    xx = lower_points[p]
+                    ctx.arc(xx[0], xx[1] - min_y, 0.01, 0, 2 * math.pi)
+                    ctx.set_source_rgb(0, 0, 1)
+                    ctx.fill()
 
         num_triangles = len(upper_triangles) + len(lower_triangles)
 
@@ -598,24 +694,36 @@ class DigitPen:
         return True
 
     def add_raw_steiner(self, p):
+        return
         if self.is_legal_steiner(p) and self.not_too_close(p):
             self.points.append(p)
+            self.raw_steiner.append(p)
 
     def force_raw_steiner(self, p):
+        return
         if self.is_legal_steiner(p):
             self.points.append(p)
 
     def add_steiner(self, p):
+        return
         a = self.adjust(p)
         self.manual_steiner.append(a)
         self.force_raw_steiner(a)
 
     def not_too_close(self, p):
-        return (
-            min((distance(q, p) for q in self.points), default=math.inf) > 0.2
-        )
+        min_dist = math.inf
+        for q in self.points:
+            dist = distance(q, p)
+            if dist < min_dist:
+                min_dist = dist
+                disqualifier = q
+        if min_dist <= 0.05:
+            self.disqualifiers.add(tuple(disqualifier))
+            return False
+        return True
 
     def add_steiner_points(self, trace=False):
+        return
         if trace:
             print("Tracing steiner")
             min_dist = math.inf
