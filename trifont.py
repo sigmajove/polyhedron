@@ -142,10 +142,6 @@ class DigitPen:
         self.upper = []
         self.lower = []
 
-        # Record the constructor parameters.
-        # We use the border to determine whether random Steiner points
-        # are valid.
-        assert len(border) > 2
         self.border = [tuple(p) for p in border]
 
         # Scale and offset are used to map numbers in the font
@@ -316,7 +312,7 @@ class DigitPen:
         out_points = set((float(p[0]), float(p[1])) for p in result["vertices"])
 
         # Remove all the Steiner points that are on segments.
-        # They cause trouble when building the net.
+        # They cause trouble when building the mesh.
         keep_steiner = []
         for p in out_points - in_points:
             if not any(
@@ -527,27 +523,6 @@ class DigitPen:
                     combined_points[t[2]],
                 )
             )
-
-    # Test that p is fully within border.
-    # It must be at least 0.05 away from any edge.
-    # Assumes that border is convex.
-    def is_legal_steiner(self, p):
-        def position(p1, p2, q):
-            num = (
-                (p2[0] - p1[0]) * q[1]
-                - (p2[1] - p1[1]) * q[0]
-                - p2[0] * p1[1]
-                + p2[1] * p1[0]
-            )
-            d_sq = (p2[0] - p1[0]) ** 2 + (p2[1] - p1[1]) ** 2
-            return num * num >= d_sq * (0.05) ** 2
-
-        prev = self.border[-1]
-        for z in self.border:
-            if not (position(prev, z, p)):
-                return False
-            prev = z
-        return True
 
 
 def main():
