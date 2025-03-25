@@ -48,31 +48,6 @@ def midpoint(p, q):
     return (0.5 * (p[0] + q[0]), 0.5 * (p[1] + q[1]))
 
 
-def is_convex_quad(a, b, c, d):
-    prev2 = c
-    prev = d
-    sign = None
-    for p in [a, b, c, d]:
-        dx0 = prev[0] - prev2[0]
-        dy0 = prev[1] - prev2[1]
-        dx1 = p[0] - prev[0]
-        dy1 = p[1] - prev[1]
-
-        cross = dx0 * dy1 - dy0 * dx1
-        if abs(cross) < 1e-4:
-            return False
-        s = -1 if cross < 0 else 1
-        if sign is None:
-            sign = s
-        else:
-            if sign != s:
-                return False
-        prev2 = prev
-        prev = p
-
-    return True
-
-
 class Triangle:
     def __init__(self, p, q, r):
         self.p0 = p
