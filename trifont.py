@@ -44,57 +44,9 @@ def distance(p, q):
     return math.sqrt(sum((a - b) ** 2 for a, b in zip(p, q)))
 
 
+# The midpoint of the line segment pq
 def midpoint(p, q):
     return (0.5 * (p[0] + q[0]), 0.5 * (p[1] + q[1]))
-
-
-# Given three(x, y) coordinates which are not colinear,
-# returns the center of the circle that passes through all three.
-def circumcenter(p1, p2, p3):
-    # Unpack the coordinates
-    x1, y1 = p1
-    x2, y2 = p2
-    x3, y3 = p3
-
-    # Calculate the perpendicular bisector parameters
-    a = 2 * (x2 - x1)
-    b = 2 * (y2 - y1)
-    c = x2**2 + y2**2 - x1**2 - y1**2
-    d = 2 * (x3 - x1)
-    e = 2 * (y3 - y1)
-    f = x3**2 + y3**2 - x1**2 - y1**2
-
-    # Calculate the circumcenter coordinates
-    x = (c * e - f * b) / (a * e - b * d)
-    y = (c * d - a * f) / (b * d - a * e)
-
-    return (x, y)
-
-
-def circle_through_points(x1, y1, x2, y2, x3, y3):
-    s1 = x1 * x1 + y1 * y1
-    s2 = x2 * x2 + y2 * y2
-    s3 = x3 * x3 + y3 * y3
-
-    y12 = y1 - y2
-    y23 = y2 - y3
-    y31 = y3 - y1
-    det = 2 * (x1 * y23 + x2 * y31 + x3 * y12)
-
-    # Calculate center coordinates
-    x0 = (s1 * y23 + s2 * y31 + s3 * y12) / det
-    y0 = (s1 * (x3 - x2) + s2 * (x1 - x3) + s3 * (x2 - x1)) / det
-
-    # Calculate radius squared
-    r_squared = (x1 - x0) ** 2 + (y1 - y0) ** 2
-
-    return (x0, y0, r_squared)
-
-
-def in_circle(a, b, c, p):
-    x0, y0, r_squared = circle_through_points(*a, *b, *c)
-    dist = (p[0] - x0) ** 2 + (p[1] - y0) ** 2
-    return dist <= r_squared
 
 
 def is_convex_quad(a, b, c, d):
@@ -120,47 +72,6 @@ def is_convex_quad(a, b, c, d):
         prev = p
 
     return True
-
-
-def check_triangulation(vertices, triangles, neighbors, tag):
-    with svg_writer.SVGWriter(tag, 25, 0.005) as ctx:
-        for tr0, n in enumerate(neighbors):
-            for v, tr1 in enumerate(n):
-                xxx = triangles[tr0]
-                apex0 = xxx[v]  # point index
-                o0, o1 = (1, 2) if v == 0 else (0, 2) if v == 1 else (0, 1)
-                other0 = xxx[o0]  # point index
-                other1 = xxx[o1]  # point index
-                if tr1 >= 0:
-                    yyy = triangles[tr1]
-                    apex1 = None
-                    for p in yyy:
-                        if p != other0 and p != other1:
-                            if apex1 is not None:
-                                raise RuntimeError("too many apex1")
-                            apex1 = p
-                    if apex1 is None:
-                        raise RuntimeError("cant find apex1")
-                    # I now have point indices
-                    # apex0, apex1, other0, other1
-                    # translate them to coordinates
-                    e0 = vertices[other0]
-                    e1 = vertices[other1]
-                    t0 = vertices[apex0]
-                    t1 = vertices[apex1]
-                    if is_convex_quad(e0, t0, e1, t1) and in_circle(
-                        e0, t0, e1, t1
-                    ):
-                        print(f"Found non-Delauney edge in {tag}")
-                        print(f"bad edge {e0}, {e1}")
-                        ctx.set_source_rgb(1, 0, 0)
-                        ctx.set_line_width(0.01)
-                    else:
-                        ctx.set_source_rgb(0, 0, 0)
-                        ctx.set_line_width(0.005)
-                    ctx.move_to(*e0)
-                    ctx.line_to(*e1)
-                    ctx.stroke()
 
 
 TRIANGLE_COUNTER = 0
@@ -208,7 +119,6 @@ class DummyPen:
         pass
 
 
-pass
 STEP = 0.025
 
 # The depth of the indentation numbers
@@ -900,83 +810,6 @@ class Codezilla:
         v = Vertex(*v)
         c = self.find_join_point(v)
         return v if c is None else c
-
-    #   def mesh_perimeter(self, mesh, points):
-    #       print("Mesh Perimeter")
-    #       edges = dict()
-
-    #       def add_edge(p, q, t):
-    #           key = normalize(p, q)
-    #           s = edges.get(key, None)
-    #           if s is None:
-    #               s = []
-    #               edges[key] = s
-    #           s.append(t)
-
-    #       for i, t in enumerate(mesh):
-    #           a, b, c = t
-    #           add_edge(a, b, i)
-    #           add_edge(b, c, i)
-    #           add_edge(c, a, i)
-
-    #       path = dict()
-
-    #       def add_path(i, j):
-    #           s = path.get(i, None)
-    #           if s is None:
-    #               s = []
-    #               path[i] = s
-    #           s.append(j)
-
-    #       def erase_path(i, j):
-    #           s = path[i]
-    #           s.remove(j)
-    #           if len(s) == 0:
-    #               del path[i]
-
-    #       start = None
-    #       for k, v in edges.items():
-    #           if len(v) == 1:
-    #               # border edge
-    #               add_path(k[0], k[1])
-    #               add_path(k[1], k[0])
-    #           elif len(v) == 2:
-    #               pass
-    #           else:
-    #               raise RuntimeError(f"{len(v)} triangles with edge")
-
-    #       for p in path.values():
-    #           assert len(p) == 2
-
-    #       start = next(iter(path.keys()))
-    #       j = start
-    #       k = path[j][0]
-    #       trail = [j, k]
-    #       while True:
-    #           n = path[k]
-    #           n = n[0] if n[1] == j else n[1]
-    #           if n == start:
-    #               break
-    #           trail.append(n)
-    #           j, k = k, n
-    #       assert len(path) == len(trail)
-    #       if True:
-    #           for t in trail:
-    #               p = points[t]
-    #               # flag = "" if self.is_join_point(Vertex() else " !!!"
-    #               # print(f"{p.x:.14f}, {p.y:.14f}, {p.z:.14f}")
-    #               print(p)
-
-    #       with svg_writer.SVGWriter("perimeter", 50, 0.01) as ctx:
-    #           points = [points[t] for t in trail]
-    #           ctx.move_to(p[0], p[1])
-    #           for p in points[1:]:
-    #               ctx.line_to(p[0], p[1])
-    #           ctx.close_path()
-    #           ctx.stroke()
-    #           for p in points:
-    #               ctx.arc(p[0], p[1], 0.02, 0, 2 * math.pi)
-    #               ctx.fill()
 
     def make_model(self):
         model = mesh.Mesh(np.zeros(len(self.big_mesh), dtype=mesh.Mesh.dtype))
