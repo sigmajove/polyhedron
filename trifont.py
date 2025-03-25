@@ -136,9 +136,9 @@ def on_segment(p, a, b):
 
 
 class DigitPen:
-    def __init__(self, faceno, border, scale, x_offset, y_offset, zilla):
+    def __init__(self, faceno, border, scale, x_offset, y_offset, builder):
         self.faceno = faceno
-        self.zilla = zilla
+        self.builder = builder
         self.upper = []
         self.lower = []
 
@@ -179,8 +179,8 @@ class DigitPen:
 
         bad = 0
         for p in self.current:
-            back = Vertex(*self.zilla.rotate_back((p[0], p[1], 0), faceno))
-            if self.zilla.find_join_point(back) is None:
+            back = Vertex(*self.builder.rotate_back((p[0], p[1], 0), faceno))
+            if self.builder.find_join_point(back) is None:
                 bad += 1
         if bad:
             print(f"border has {bad} of {len(self.current)} bad points")
@@ -456,8 +456,8 @@ class DigitPen:
         # Translate the 2d triangulation back to its
         # original 3d coordinates.
         for j, p in enumerate(combined_points):
-            combined_points[j] = self.zilla.correct(
-                self.zilla.rotate_back(p, i)
+            combined_points[j] = self.builder.correct(
+                self.builder.rotate_back(p, i)
             )
 
         for p in combined_points:
@@ -465,7 +465,7 @@ class DigitPen:
                 print(f"Bad point {type(p)}")
 
         for t in mesh_triangles:
-            self.zilla.big_mesh.append(
+            self.builder.big_mesh.append(
                 Triangle(
                     combined_points[t[0]],
                     combined_points[t[1]],
@@ -475,7 +475,7 @@ class DigitPen:
 
 
 def main():
-    c = Codezilla()
+    c = BuildModel()
     f = fixer.Fixer()
     for i in range(18):
         c.print_digit(i, f)
@@ -496,7 +496,7 @@ def internal_points(r0, r1):
         yield (mx, my, mz)
 
 
-class Codezilla:
+class BuildModel:
     def __init__(self):
         self.poly = poly18()
         self.flattened = [None] * len(self.poly)
@@ -762,7 +762,7 @@ class Codezilla:
             x_offset=-0.5 * dimension[0],
             y_offset=self.flattened_center[i][1] / scale_factor
             - 0.5 * dimension[1],
-            zilla=self,
+            builder=self,
         )
 
         Font(pen).draw(label)
