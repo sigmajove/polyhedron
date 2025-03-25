@@ -454,9 +454,9 @@ class DigitPen:
             u0 = to_upper(e[0])
             u1 = to_upper(e[1])
 
-            # This is a very delicate opertion. Order matters.
-            # I wish I had a better explanation, but the model builders
-            # don't complain.
+            # This is a very delicate operation. Order matters.
+            # I wish I had a better explanation for why it needs
+            # to be this way. The model builders don't complain.
             mesh_triangles.append((l0, u0, l1))
             mesh_triangles.append((u0, u1, l1))
             num_triangles += 2
