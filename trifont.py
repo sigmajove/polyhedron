@@ -394,14 +394,13 @@ class DigitPen:
         print(f"Wrote out {filename}")
 
     def make_mesh(self, fixer, i):
-        trace = i == 3
         upper_points, upper_triangles, upper_boundary = self.triangulate(
             fixer, upper=True
         )
         lower_points, lower_triangles, lower_boundary = self.triangulate(
             fixer, upper=False
         )
-        if trace:
+        if False:
             with svg_writer.SVGWriter("debug", 50, 0.01) as ctx:
                 bpoints = set()
                 for e, f in lower_boundary:
