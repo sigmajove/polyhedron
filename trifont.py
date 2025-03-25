@@ -265,38 +265,6 @@ class DigitPen:
             after = len(self.segments)
         self.current = []
 
-    def dump_data(self, i):
-        filename = f"data{i:02d}"
-        segpoints = set()
-        for s in self.segments:
-            segpoints.add(s[0])
-            segpoints.add(s[1])
-        with svg_writer.SVGWriter(filename, 25, 0.005) as ctx:
-            for i, p in enumerate(self.points):
-                if i in segpoints:
-                    ctx.set_source_rgb(0, 0, 0)
-                else:
-                    ctx.set_source_rgb(1, 0, 0)
-                ctx.arc(*p, 0.01, 0, 2 * math.pi)
-                ctx.fill()
-            ctx.set_source_rgb(0, 0, 0)
-            for s in self.segments:
-                ctx.move_to(*self.points[s[0]])
-                ctx.line_to(*self.points[s[1]])
-                ctx.stroke()
-
-            for h in self.lower:
-                ctx.set_source_rgb(0, 1, 0)
-                ctx.arc(*h, 0.01, 0, 2 * math.pi)
-                ctx.fill()
-
-            for h in self.upper:
-                ctx.set_source_rgb(0, 0, 1)
-                ctx.arc(*h, 0.01, 0, 2 * math.pi)
-                ctx.fill()
-
-        print(f"Wrote {filename}")
-
     def triangulate(self, fixer, lower, tag=None):
         result = triangle.triangulate(
             {
@@ -342,13 +310,14 @@ class DigitPen:
             [int(n[0]), int(n[1]), int(n[2])] for n in result["neighbors"]
         ]
 
-        # Delaunay triangulation works pretty well, but sometimes it
-        # can produce triangles that Blender's 3D print toolkit flags as
-        # being too skinny. Locate and repair skinny triangle, where possible.
+        # Jonathan Richard Shewchuk's Triangle API works pretty well.
+        # However, Blender's 3D print toolkit sometimes flags triangles
+        # that have an angle approaching 180 degrees. So I make a pass to
+        # try to eliminate triangles that have an angle greater or equal to
+        # 135 degrees. This pass is probably addressing issues that are
+        # no longer present, but I wrote the code, and will be leaving
+        # it in for the nonce.
         fixer.remove_very_obtuse_triangles(points, triangles, neighbors)
-
-        # Make sure rotate_edge didn't mess up the neighbors.
-        rotate_edge.check_neighbors(triangles, neighbors)
 
         # Find all the boundary edges.
         # These are found in triangles with missing neighbors.
@@ -388,7 +357,6 @@ class DigitPen:
 
     def dump(self, i, fixer):
         filename = f"tile{i:02d}"
-        has_weird = False
         with svg_writer.SVGWriter(filename, 25, 1) as ctx:
             ctx.set_line_width(0.001)
             points, triangles, _ = self.triangulate(fixer, lower=False)
@@ -396,17 +364,6 @@ class DigitPen:
 
             ctx.set_source_rgb(0, 0, 0)
             for i, t in enumerate(triangles):
-                if rotate_edge.is_weird(points, triangles, neighbors, i):
-                    has_weird = True
-                    ctx.save()
-                    ctx.set_source_rgba(0, 1, 0, 0.6)
-                    ctx.move_to(*points[t[0]])
-                    ctx.line_to(*points[t[1]])
-                    ctx.line_to(*points[t[2]])
-                    ctx.close_path()
-                    ctx.fill()
-                    ctx.restore()
-
                 ctx.move_to(*points[t[0]])
                 ctx.line_to(*points[t[1]])
                 ctx.line_to(*points[t[2]])
@@ -422,11 +379,7 @@ class DigitPen:
                 ctx.line_to(*points[t[1]])
                 ctx.line_to(*points[t[2]])
                 ctx.close_path()
-                if rotate_edge.is_weird(points, triangles, neighbors, i):
-                    has_weird = True
-                    ctx.set_source_rgba(0, 1, 0, 0.6)
-                else:
-                    ctx.set_source_rgba(1, 0, 0, 0.6)
+                ctx.set_source_rgba(0, 0, 1, 0.6)
                 ctx.fill()
                 ctx.set_source_rgb(0, 0, 0)
 
@@ -435,10 +388,7 @@ class DigitPen:
                 ctx.line_to(*points[t[2]])
                 ctx.close_path()
                 ctx.stroke()
-
-            if has_weird:
-                print("Has weird")
-            print(f"Wrote out {filename}")
+        print(f"Wrote out {filename}")
 
     def make_mesh(self, fixer, i):
         trace = i == 3
@@ -826,7 +776,6 @@ class Codezilla:
         )
 
         Font(pen).draw(label)
-        # pen.dump_data(i)
         pen.dump(i, fixer)
         pen.make_mesh(fixer, i)
 
