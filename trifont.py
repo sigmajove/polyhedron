@@ -391,21 +391,21 @@ class DigitPen:
 
     def make_mesh(self, fixer, i):
         trace = i == 3
-        upper_points, upper_triangles, upper_boundary = self.triangulate(
+        lower_points, lower_triangles, lower_boundary = self.triangulate(
             fixer, lower=False, tag=f"upper{i:02d}"
         )
-        lower_points, lower_triangles, lower_boundary = self.triangulate(
+        upper_points, upper_triangles, upper_boundary = self.triangulate(
             fixer, lower=True, tag=f"lower{i:02d}"
         )
         if trace:
             with svg_writer.SVGWriter("debug", 50, 0.01) as ctx:
                 bpoints = set()
-                for e, f in upper_boundary:
+                for e, f in lower_boundary:
                     bpoints.add(e)
                     bpoints.add(f)
                 min_y = math.inf
                 for p in bpoints:
-                    xx = upper_points[p]
+                    xx = lower_points[p]
                     ctx.arc(*xx, 0.01, 0, 2 * math.pi)
                     min_y = min(min_y, xx[1])
                     ctx.set_source_rgb(1, 0, 0)
@@ -413,29 +413,29 @@ class DigitPen:
 
                 min_y -= 0.5
                 bpoints = set()
-                for e, f in lower_boundary:
+                for e, f in upper_boundary:
                     bpoints.add(e)
                     bpoints.add(f)
                 for p in bpoints:
-                    xx = lower_points[p]
+                    xx = upper_points[p]
                     ctx.arc(xx[0], xx[1] - min_y, 0.01, 0, 2 * math.pi)
                     ctx.set_source_rgb(0, 0, 1)
                     ctx.fill()
 
-        num_triangles = len(upper_triangles) + len(lower_triangles)
+        num_triangles = len(lower_triangles) + len(upper_triangles)
 
         # The combined points will be upper + lower
         def to_lower(p):
-            return p + len(upper_points)
+            return p + len(lower_points)
 
         combined_points = []
-        for p in upper_points:
-            combined_points.append((p[0], p[1], -DEPTH))
         for p in lower_points:
+            combined_points.append((p[0], p[1], -DEPTH))
+        for p in upper_points:
             combined_points.append((p[0], p[1], 0))
 
-        mesh_triangles = [t for t in upper_triangles]
-        for t in lower_triangles:
+        mesh_triangles = [t for t in lower_triangles]
+        for t in upper_triangles:
             mesh_triangles.append(tuple([to_lower(p) for p in t]))
 
         for e in set(lower_boundary) & set(upper_boundary):
