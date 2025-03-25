@@ -770,4 +770,5 @@ class Codezilla:
         pen.make_mesh(fixer, i)
 
 
-main()
+if __name__ == "__main__":
+    main()
