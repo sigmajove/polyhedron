@@ -360,10 +360,17 @@ class DigitPen:
         with svg_writer.SVGWriter(filename, 25, 1) as ctx:
             ctx.set_line_width(0.001)
             points, triangles, _ = self.triangulate(fixer, lower=False)
-            neighbors = rotate_edge.compute_neighbors(triangles)
 
             ctx.set_source_rgb(0, 0, 0)
             for i, t in enumerate(triangles):
+                ctx.move_to(*points[t[0]])
+                ctx.line_to(*points[t[1]])
+                ctx.line_to(*points[t[2]])
+                ctx.close_path()
+                ctx.set_source_rgba(0, 0, 1, 0.4)
+                ctx.fill()
+
+                ctx.set_source_rgb(0, 0, 0)
                 ctx.move_to(*points[t[0]])
                 ctx.line_to(*points[t[1]])
                 ctx.line_to(*points[t[2]])
@@ -371,17 +378,9 @@ class DigitPen:
                 ctx.stroke()
 
             points, triangles, _ = self.triangulate(fixer, lower=True)
-            neighbors = rotate_edge.compute_neighbors(triangles)
 
             ctx.set_source_rgb(0, 0, 0)
             for i, t in enumerate(triangles):
-                ctx.move_to(*points[t[0]])
-                ctx.line_to(*points[t[1]])
-                ctx.line_to(*points[t[2]])
-                ctx.close_path()
-                ctx.set_source_rgba(0, 0, 1, 0.6)
-                ctx.fill()
-                ctx.set_source_rgb(0, 0, 0)
 
                 ctx.move_to(*points[t[0]])
                 ctx.line_to(*points[t[1]])
