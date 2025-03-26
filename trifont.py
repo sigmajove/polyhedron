@@ -51,10 +51,11 @@ def midpoint(p, q):
 
 
 class Triangle:
-    def __init__(self, p, q, r):
+    def __init__(self, p, q, r, color=None):
         self.p0 = p
         self.p1 = q
         self.p2 = r
+        self.color = color
 
     def area(self):
         v1 = self.p1 - self.p0
@@ -457,6 +458,28 @@ class DigitPen:
                 )
             )
 
+    def make_colored_mesh(self, fixer, faceno):
+        for color in (True, False):
+            points, triangles, _ = self.triangulate(fixer, upper=not color)
+
+            # Translate the 2d triangulation back to its original
+            # 3d coordinates.
+            three_d_points = [
+                self.builder.correct(
+                    self.builder.rotate_back((p[0], p[1], 0), faceno)
+                )
+                for p in points
+            ]
+            for t in triangles:
+                self.builder.big_mesh.append(
+                    Triangle(
+                        three_d_points[t[0]],
+                        three_d_points[t[1]],
+                        three_d_points[t[2]],
+                        color=color,
+                    )
+                )
+
 
 def main():
     c = BuildModel()
@@ -495,8 +518,7 @@ class BuildModel:
 
         self.store_join_points()
 
-        # This is the model we are producing.
-        # A list of 3-tuples of 2-tuples of (x, y, z) coordinates.
+        # This is the model we are producing. A list of Triangles.
         self.big_mesh = []
 
         self.poles([0, 2, 4, 6, 8])
@@ -565,44 +587,45 @@ class BuildModel:
         print("Wrote out model")
 
     def make_3mf(self):
-        # Create vertex in a mesh
-        def create_vertex(mesh, x, y, z):
-            position = lib3mf.Position()
-            position.Coordinates[0] = float(x)
-            position.Coordinates[1] = float(y)
-            position.Coordinates[2] = float(z)
-            mesh.AddVertex(position)
-            return position
+        # Use the lib3mf library to create a 3mf file containing
+        # a colored model.
 
-        # Add triangle in a mesh
-        def add_triangle(mesh, p1, p2, p3):
-            triangle = lib3mf.Triangle()
-            triangle.Indices[0] = p1
-            triangle.Indices[1] = p2
-            triangle.Indices[2] = p3
-            mesh.AddTriangle(triangle)
-            return triangle
+        # I couldn't find any useful documentation for the Python
+        # bindings for lib3mf. The following is a combination of
+        # cut-and-paste from AIs, experimenation, guesswork, and
+        # peeking at the C++ source code on GitHub.
 
         wrapper = lib3mf.get_wrapper()
         model = wrapper.CreateModel()
 
+        model.SetUnit(lib3mf.ModelUnit.MilliMeter)
+
         # Create a color group
         color_group = model.AddColorGroup()
 
-        # Define a color (RGBA format, values between 0-1)
-        red_color = wrapper.FloatRGBAToColor(1.0, 0.0, 0.0, 1.0)  # Red color
-        red_property_id = color_group.AddColor(red_color)
+        # Define the property of white triangles.
+        white_property_id = color_group.AddColor(
+            wrapper.FloatRGBAToColor(1.0, 1.0, 1.0, 1.0)
+        )
+        white_props = lib3mf.TriangleProperties()
+        white_props.ResourceID = color_group.GetResourceID()
+        white_props.PropertyIDs[0] = white_property_id
+        white_props.PropertyIDs[1] = white_property_id
+        white_props.PropertyIDs[2] = white_property_id
 
-        triangle_props = lib3mf.TriangleProperties()
-        triangle_props.ResourceID = color_group.GetResourceID()
-        triangle_props.PropertyIDs[0] = red_property_id
-        triangle_props.PropertyIDs[1] = red_property_id
-        triangle_props.PropertyIDs[2] = red_property_id
+        # Define the property of black triangles.
+        black_property_id = color_group.AddColor(
+            wrapper.FloatRGBAToColor(0.0, 0.0, 0.0, 1.0)
+        )
+        black_props = lib3mf.TriangleProperties()
+        black_props.ResourceID = color_group.GetResourceID()
+        black_props.PropertyIDs[0] = black_property_id
+        black_props.PropertyIDs[1] = black_property_id
+        black_props.PropertyIDs[2] = black_property_id
 
         mesh_object = model.AddMeshObject()
-        mesh_object.SetName("Box")
 
-        # Reconstruct the points. We had this once, maybe pass it along instead?
+        # Create an index of all the 3D coordinates in the input mesh.
         points = dict()
         next = 0
 
@@ -616,29 +639,52 @@ class BuildModel:
             add_point(t.p1.value())
             add_point(t.p2.value())
 
+        # Create a list of vertices indexed by the integers assigned
+        # and written into dict.
         vertices = len(points) * [None]
         for p, i in points.items():
-            vertices[i] = create_vertex(mesh_object, *p)
+            position = lib3mf.Position()
+            for j, c in enumerate(p):
+                position.Coordinates[j] = c
+            mesh_object.AddVertex(position)
+            vertices[i] = position
 
-        triangles = [
-            add_triangle(
-                mesh_object,
-                points[t.p0.value()],
-                points[t.p1.value()],
-                points[t.p2.value()],
-            )
-            for t in self.big_mesh
-        ]
+        triangles = []
+        colors = []
+        for t in self.big_mesh:
+            triangle = lib3mf.Triangle()
+            triangle.Indices[0] = points[t.p0.value()]
+            triangle.Indices[1] = points[t.p1.value()]
+            triangle.Indices[2] = points[t.p2.value()]
+
+            mesh_object.AddTriangle(triangle)
+            triangles.append(triangle)
+
+            # Keep track of the color of each triangle.
+            # We are assuming that the indices returned by
+            # mesh_object.AddTriangle are consecutive integers
+            # beginning with zero. I don't like that assumption
+            # but I couldn't get anything else to work.
+            colors.append(black_props if t.color else white_props)
 
         mesh_object.SetGeometry(vertices, triangles)
-        mesh_object.SetAllTriangleProperties(
-            len(self.big_mesh) * [triangle_props]
-        )
+
+        # It appears by experimentation that I cannot set the colors
+        # of the triangle in the model until after SetGeometry is called.
+        # I would prefer to set the colors one at a time, using
+        # mesh_object.SetTriangleProperties, using the indices
+        # returned by mesh_object.AddTriangle above. But that doesn't work.
+        # SetAllTriangleProperties sets an object-level property (whatever
+        # that is) and SetTriangleProperty doesn't. And the object-level
+        # property seems to be needed to write out a colored model.
+        mesh_object.SetAllTriangleProperties(colors)
+
         model.AddBuildItem(mesh_object, wrapper.GetIdentityTransform())
 
         # Save the model to a 3MF file
-        writer = model.QueryWriter("3mf")
-        writer.WriteToFile("c:/users/sigma/documents/model18.3mf")
+        model.QueryWriter("3mf").WriteToFile(
+            "c:/users/sigma/documents/model18.3mf"
+        )
         print("Wrote out model")
 
     def check_mesh(self):
@@ -812,25 +858,26 @@ class BuildModel:
         )
         return inflated.move(Vertex(*self.poly[i][3]))
 
-    def print_digit(self, i, fixer):
-        label = LABELS[i]
+    def print_digit(self, faceno, fixer):
+        label = LABELS[faceno]
         dimension = Font(DummyPen()).draw(label)
         text_height = 0.9  # Warning: dependent on size of die
         scale_factor = text_height / dimension[1]
 
         pen = DigitPen(
-            faceno=i,
-            border=self.flattened[i],
+            faceno=faceno,
+            border=self.flattened[faceno],
             scale=scale_factor,
             x_offset=-0.5 * dimension[0],
-            y_offset=self.flattened_center[i][1] / scale_factor
+            y_offset=self.flattened_center[faceno][1] / scale_factor
             - 0.5 * dimension[1],
             builder=self,
         )
 
         Font(pen).draw(label)
-        pen.write_tile(i, fixer)
-        pen.make_mesh(fixer, i)
+        pen.write_tile(faceno, fixer)
+        # pen.make_mesh(fixer, faceno)
+        pen.make_colored_mesh(fixer, faceno)
 
 
 if __name__ == "__main__":
