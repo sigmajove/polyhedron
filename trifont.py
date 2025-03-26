@@ -8,10 +8,12 @@ from scipy.interpolate import BSpline
 from stl import mesh
 import copy
 import fixer
+import lib3mf
 import math
 import numpy
 import svg_writer
 import triangle
+
 
 # Maps the internal numbering used by poly18 for the faces to the
 # numbers we want inscribed on each face.
@@ -463,7 +465,7 @@ def main():
         c.print_digit(i, f)
     f.print_statistics()
     c.check_mesh()
-    c.make_model()
+    c.make_3mf()
 
 
 def internal_points(r0, r1):
@@ -560,6 +562,83 @@ class BuildModel:
             model.vectors[i][2] = t.p2.value()
         model.check(exact=True)
         model.save("c:/users/sigma/documents/model18.stl")
+        print("Wrote out model")
+
+    def make_3mf(self):
+        # Create vertex in a mesh
+        def create_vertex(mesh, x, y, z):
+            position = lib3mf.Position()
+            position.Coordinates[0] = float(x)
+            position.Coordinates[1] = float(y)
+            position.Coordinates[2] = float(z)
+            mesh.AddVertex(position)
+            return position
+
+        # Add triangle in a mesh
+        def add_triangle(mesh, p1, p2, p3):
+            triangle = lib3mf.Triangle()
+            triangle.Indices[0] = p1
+            triangle.Indices[1] = p2
+            triangle.Indices[2] = p3
+            mesh.AddTriangle(triangle)
+            return triangle
+
+        wrapper = lib3mf.get_wrapper()
+        model = wrapper.CreateModel()
+
+        # Create a color group
+        color_group = model.AddColorGroup()
+
+        # Define a color (RGBA format, values between 0-1)
+        red_color = wrapper.FloatRGBAToColor(1.0, 0.0, 0.0, 1.0)  # Red color
+        red_property_id = color_group.AddColor(red_color)
+
+        triangle_props = lib3mf.TriangleProperties()
+        triangle_props.ResourceID = color_group.GetResourceID()
+        triangle_props.PropertyIDs[0] = red_property_id
+        triangle_props.PropertyIDs[1] = red_property_id
+        triangle_props.PropertyIDs[2] = red_property_id
+
+        mesh_object = model.AddMeshObject()
+        mesh_object.SetName("Box")
+
+        # Reconstruct the points. We had this once, maybe pass it along instead?
+        points = dict()
+        next = 0
+
+        def add_point(p):
+            nonlocal next
+            if points.setdefault(p, next) == next:
+                next += 1
+
+        for t in self.big_mesh:
+            add_point(t.p0.value())
+            add_point(t.p1.value())
+            add_point(t.p2.value())
+
+        vertices = len(points) * [None]
+        for p, i in points.items():
+            vertices[i] = create_vertex(mesh_object, *p)
+
+        triangles = [
+            add_triangle(
+                mesh_object,
+                points[t.p0.value()],
+                points[t.p1.value()],
+                points[t.p2.value()],
+            )
+            for t in self.big_mesh
+        ]
+
+        mesh_object.SetGeometry(vertices, triangles)
+        mesh_object.SetAllTriangleProperties(
+            len(self.big_mesh) * [triangle_props]
+        )
+        model.AddBuildItem(mesh_object, wrapper.GetIdentityTransform())
+
+        # Save the model to a 3MF file
+        writer = model.QueryWriter("3mf")
+        writer.WriteToFile("c:/users/sigma/documents/model18.3mf")
         print("Wrote out model")
 
     def check_mesh(self):
