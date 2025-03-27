@@ -231,7 +231,7 @@ def make_polygon(half_spaces, size):
             kept_points.append((vertex, faces))
 
     # The preceding algorithm is not so good. On the good side, it
-    # is very general, making few assumption about the input data.
+    # is very general, making few assumptions about the input data.
     # On the bad side, it is using floating point calculations to
     # detect the fact that face faces meet as a single point at the
     # north and south poles. That calcuation is very sensitive to
