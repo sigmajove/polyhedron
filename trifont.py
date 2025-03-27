@@ -13,6 +13,7 @@ import fixer
 import lib3mf
 import math
 import numpy
+import os
 import svg_writer
 import sys
 import triangle
@@ -495,6 +496,9 @@ def main():
         "-b", "--background", default="white", help="Color of the die"
     )
     parser.add_argument(
+        "--obj", action="store_true", help="Write out a .obj file"
+    )
+    parser.add_argument(
         "-s",
         "--size",
         type=float,
@@ -527,7 +531,9 @@ def main():
         c.print_digit(i, f)
     f.print_statistics()
     c.check_mesh()
-    if args.color:
+    if args.obj:
+        c.make_obj()
+    elif args.color:
         c.make_3mf()
     else:
         c.make_stl()
@@ -733,6 +739,79 @@ class BuildModel:
         filename = "c:/users/sigma/documents/model18.3mf"
         model.QueryWriter("3mf").WriteToFile(filename)
         print(f"Wrote out {filename}")
+
+    def make_obj(self):
+        # Create an index of all the 3D coordinates in the input mesh.
+        points = dict()
+        next = 0
+
+        def add_point(p):
+            nonlocal next
+            if points.setdefault(p, next) == next:
+                next += 1
+
+        for t in self.big_mesh:
+            add_point(t.p0.value())
+            add_point(t.p1.value())
+            add_point(t.p2.value())
+
+        # Create a list of vertices indexed by the integers assigned
+        # and written into dict.
+        vertices = len(points) * [None]
+        for p, i in points.items():
+            vertices[i] = p
+
+        used_colors = []
+        filename = "c:/users/sigma/documents/model18.obj"
+        with open(filename, "w") as file:
+            file.write("#obj file for 18-sided die\n")
+            for v in vertices:
+                file.write(f"v {repr(v[0])} {repr(v[1])} {repr(v[2])}\n")
+
+            # Make three passes over the mesh to sort by color.
+            for color in (None, True, False):
+                first = True
+                for t in self.big_mesh:
+                    if getattr(t, "color", None) is color:
+                        if first:
+                            # Careful, color might be None
+                            if color is True:
+                                file.write("usemtl foreground\n")
+                                used_colors.append(color)
+                            elif color is False:
+                                file.write("usemtl background\n")
+                                used_colors.append(color)
+                            first = False
+
+                        # Triangles expect the vertex indices to be one-based.
+
+                        # The winding order of the vertices doesn't seem
+                        # to matter much. This is the order avoids red
+                        # faces in Blender when you turn on the face
+                        # orientation overlay.
+                        i0 = points[t.p0.value()] + 1
+                        i1 = points[t.p1.value()] + 1
+                        i2 = points[t.p2.value()] + 1
+                        file.write(f"f {i0} {i1} {i2}\n")
+        print(f"Wrote out {filename}")
+
+        filename = filename[:-3] + "mtl"
+        if used_colors:
+            # Write out a material template library
+            with open(filename, "w") as file:
+                for c in used_colors:
+                    if c:
+                        file.write("newmtl foreground\n")
+                        rgb = self.args.foreground_rgb
+                    else:
+                        file.write("newmtl background\n")
+                        rgb = self.args.background_rgb
+                    file.write(f"Kd {rgb[0]} {rgb[1]} {rgb[2]}\n")
+            print(f"Wrote out {filename}")
+        else:
+            if os.path.exists(filename):
+                os.remove(filename)
+                print(f"Deleted {filename}")
 
     def check_mesh(self):
         counter = 0
