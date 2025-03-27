@@ -93,7 +93,7 @@ class DummyPen:
 STEP = 0.025
 
 # The depth of the indentation numbers
-DEPTH = 0.1
+DEPTH = 0.05
 
 
 # Returns a sorted tuple
