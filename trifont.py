@@ -90,6 +90,7 @@ class DummyPen:
         pass
 
 
+# The length of the line segments that form curves.
 STEP = 0.025
 
 # The depth of the indentation numbers
