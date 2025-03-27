@@ -90,13 +90,6 @@ class DummyPen:
         pass
 
 
-# The length of the line segments that form curves.
-STEP = 0.025
-
-# The depth of the indentation numbers
-DEPTH = 0.05
-
-
 # Returns a sorted tuple
 def normalize(a, b):
     return (a, b) if a <= b else (b, a)
@@ -121,6 +114,8 @@ class DigitPen:
     def __init__(self, faceno, border, scale, x_offset, y_offset, builder):
         self.faceno = faceno
         self.builder = builder
+
+        # The target length for the line segments that form curves.
         self.upper = []
         self.lower = []
 
@@ -182,7 +177,7 @@ class DigitPen:
     # Uses raw(border - relative) coordinates.
     def interpolate(self, r1):
         r0 = self.current[-1]
-        n = math.ceil(distance(r0, r1) / (10 * STEP))
+        n = math.ceil(distance(r0, r1) / (10 * self.builder.step))
         dx = r1[0] - r0[0]
         dy = r1[1] - r0[1]
         for i in range(1, n):
@@ -226,8 +221,8 @@ class DigitPen:
             prev = p
 
         # Choose a number of segments so that each segment will
-        # have length approximately STEP
-        num_segments = math.ceil(length / STEP)
+        # have length approximately self.step
+        num_segments = math.ceil(length / self.builder.step)
 
         for x, y in spline(numpy.linspace(0, 1, num_segments))[1:]:
             p = (float(x), float(y))
@@ -413,9 +408,10 @@ class DigitPen:
         def to_upper(p):
             return p + len(lower_points)
 
+        depth = 0.025 * self.builder.args.size
         combined_points = []
         for p in lower_points:
-            combined_points.append((p[0], p[1], -DEPTH))
+            combined_points.append((p[0], p[1], -depth))
         for p in upper_points:
             combined_points.append((p[0], p[1], 0))
 
@@ -498,6 +494,13 @@ def main():
     parser.add_argument(
         "-b", "--background", default="white", help="Color of the die"
     )
+    parser.add_argument(
+        "-s",
+        "--size",
+        type=float,
+        default=20.0,
+        help="Size of the die in mm from face to face",
+    )
     args = parser.parse_args()
 
     args_error = None
@@ -531,22 +534,14 @@ def main():
     return 0
 
 
-def internal_points(r0, r1):
-    n = math.ceil(distance(r0, r1) / (10 * STEP))
-    dx = r1[0] - r0[0]
-    dy = r1[1] - r0[1]
-    dz = r1[2] - r0[2]
-    for i in range(1, n):
-        mx = r0[0] + (i * dx) / n
-        my = r0[1] + (i * dy) / n
-        mz = r0[2] + (i * dz) / n
-        yield (mx, my, mz)
-
-
 class BuildModel:
     def __init__(self, args):
         self.args = args
-        self.poly = poly18()
+        self.poly = poly18(args.size)
+
+        # The target length for line segments that approximate curves.
+        self.step = args.size * 0.0125
+
         self.flattened = [None] * len(self.poly)
         self.flattened_center = [None] * len(self.poly)
         self.flattened_top = [None] * len(self.poly)
@@ -566,6 +561,17 @@ class BuildModel:
         self.poles([1, 3, 5, 7, 9])
         for i in (10, 12, 14, 16, 11, 13, 15, 17):
             self.barrel(i)
+
+    def internal_points(self, r0, r1):
+        n = math.ceil(distance(r0, r1) / (10 * self.step))
+        dx = r1[0] - r0[0]
+        dy = r1[1] - r0[1]
+        dz = r1[2] - r0[2]
+        for i in range(1, n):
+            mx = r0[0] + (i * dx) / n
+            my = r0[1] + (i * dy) / n
+            mz = r0[2] + (i * dz) / n
+            yield (mx, my, mz)
 
     # Join points are on the intersection of two faces.
     # When we map 3d points to 2d points and back to 3d,
@@ -590,7 +596,7 @@ class BuildModel:
 
         self.join_points = [Vertex(*p) for p in vertices]
         for k in edges.keys():
-            for p in internal_points(k[0], k[1]):
+            for p in self.internal_points(k[0], k[1]):
                 self.join_points.append(Vertex(*p))
 
     def find_join_point(self, v):
@@ -902,7 +908,7 @@ class BuildModel:
     def print_digit(self, faceno, fixer):
         label = LABELS[faceno]
         dimension = Font(DummyPen()).draw(label)
-        text_height = 0.9  # Warning: dependent on size of die
+        text_height = 0.45 * self.args.size
         scale_factor = text_height / dimension[1]
 
         pen = DigitPen(

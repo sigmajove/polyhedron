@@ -4,9 +4,6 @@ import numpy
 # A number expected to be a floating point rounding error away from zero.
 EPSILON = 1e-10
 
-# SIZE is the distance from the center of the sphere to each face.
-SIZE = 2.0  # So that the die is 4mm tall
-
 
 # Maintains small natural id for each Vertex, and the set of faces
 # that use each Vertex.
@@ -26,7 +23,8 @@ class PointIntern:
         for i, point in enumerate(self.points):
             if vertex.isclose(point[0]):
                 for f in faces:
-                    point[1].add(f)
+                    if f not in point[1]:
+                        point[1].add(f)
                 return i
         self.points.append((vertex, set(faces)))
         return len(self.points)
@@ -39,7 +37,8 @@ def dot_product(v0, v1):
     return sum(v0[i] * v1[i] for i in range(length))
 
 
-ABS_TOL = 1.5e-14
+# See comment below
+ABS_TOL = 1.5e-10
 REL_TOL = 1e-8
 
 
@@ -190,7 +189,7 @@ def is_counterclockwise(v0, v1, v2, face):
 #   f is a list of face-ids that are adjacent to the face (in what order?)
 #   n is normal vector perpendicular to the face, pointing outward.
 #   c is the 3d coordinates of the point where the face touches the sphere.
-def make_polygon(half_spaces):
+def make_polygon(half_spaces, size):
     # Find all the potential vertices, using the brute force approach
     # of intersecting all possible triples of spaces. Not all of these
     # points will be on the surface of the polyhedron.
@@ -224,11 +223,40 @@ def make_polygon(half_spaces):
             # Check if the vertex is contained with the half-space h,
             # allowing for a little inaccuracy. If not, then we don't
             # keep the vertex.
+
             if dot_product(h[0:3], vertex.value()) + h[3] > EPSILON:
                 keep = False
                 break
         if keep:
             kept_points.append((vertex, faces))
+
+    # The preceding algorithm is not so good. On the good side, it
+    # is very general, making few assumption about the input data.
+    # On the bad side, it is using floating point calculations to
+    # detect the fact that face faces meet as a single point at the
+    # north and south poles. That calcuation is very sensitive to
+    # the values ABS_TOL and REL_TOL as the size of the model scales.
+
+    # Perform some sanity checks to ensure we got the right answer for
+    # the only case for which we expect to use this code.
+    # If these tests fail, perhaps a different algorithm is in order.
+    # But it would be easier to adjust ABS_TOL.
+    num_kept_points = len(kept_points)
+    if num_kept_points != 28:
+        raise RuntimeError(
+            f"Number of vertices should be 28, not {num_kept_points}"
+        )
+    num_poles = 0
+    for v, f in kept_points:
+        intersects = len(f)
+        if intersects == 5:
+            if abs(v.x) >= EPSILON or abs(v.y) >= EPSILON:
+                raise RuntimeError(f"An apex is not centered")
+            num_poles += 1
+        elif intersects != 3:
+            raise RuntimeError(f"{intersects} edges should not meet at a point")
+    if num_poles != 2:
+        raise RuntimeError(f"There should not be {num_poles} apexes")
 
     # We have all the vertices. Now we need to find all the edges.
 
@@ -305,13 +333,14 @@ def make_polygon(half_spaces):
         normal = Vector(*half_spaces[z][0:3])
 
         # The point at which the sphere touches the face.
-        center = tuple(SIZE * c for c in half_spaces[z][0:3])
+        center = tuple(size * c for c in half_spaces[z][0:3])
 
         result.append((vertices, faces, normal, center))
     return result
 
 
-def poly18():
+# size is the distance from the center of the sphere to each face.
+def poly18(size):
     # These parameters define an 18-sided polyhedron whose faces have equal
     # area within a tenth of a percent.
     phi = 0.67401686035084829
@@ -349,7 +378,6 @@ def poly18():
 
     # Convert from Spherical coordinates to Cartesian coordinates.
     halves = []
-    # Size is the distance from the center of the sphere to each face.
     for theta, phi in coords:
         sin_phi = math.sin(phi)
         x = math.cos(theta) * sin_phi
@@ -359,19 +387,7 @@ def poly18():
         # x**2 + y**2 + z**2 == 1
 
         # The pairs of faces are antipodal.
-        halves.append((x, y, z, -SIZE))
-        halves.append((-x, -y, -z, -SIZE))
+        halves.append((x, y, z, -size))
+        halves.append((-x, -y, -z, -size))
 
-    return make_polygon(halves)
-
-
-def display():
-    for i, l in enumerate(poly18()):
-        print(f"id = {i}")
-        print(f"verticies =")
-        for v in l[0]:
-            print(f"    {v}")
-        print(f"adjacent faces = {l[1]}")
-        print(f"normal_vector = {l[2]}")
-        print(f"center point = {l[3]}")
-        print("===========")
+    return make_polygon(halves, size)
