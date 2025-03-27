@@ -4,14 +4,17 @@ from poly18 import Vector
 from poly18 import cross_product
 from poly18 import dot_product
 from poly18 import poly18
+from matplotlib.colors import to_rgb
 from scipy.interpolate import BSpline
 from stl import mesh
+import argparse
 import copy
 import fixer
 import lib3mf
 import math
 import numpy
 import svg_writer
+import sys
 import triangle
 
 
@@ -482,13 +485,49 @@ class DigitPen:
 
 
 def main():
-    c = BuildModel()
+    parser = argparse.ArgumentParser(
+        prog="die18", description="A 3D Model of an 18-sided die"
+    )
+    parser.add_argument(
+        "-c", "--color", action="store_true", help="Create color model"
+    )
+    parser.add_argument(
+        "-f", "--foreground", default="black", help="Color of the numbers"
+    )
+    parser.add_argument(
+        "-b", "--background", default="white", help="Color of the die"
+    )
+    args = parser.parse_args()
+
+    args_error = None
+    try:
+        rgb = to_rgb(args.foreground)
+        args.foreground_rgb = rgb
+    except:
+        print(f'Unknown foreground color "{args.foreground}"')
+        args_error = 1
+
+    try:
+        rgb = to_rgb(args.background)
+        args.background_rgb = rgb
+    except:
+        print(f'Unknown background color "{args.foreground}"')
+        args_error = 1
+
+    if args_error:
+        return args_error
+
+    c = BuildModel(args)
     f = fixer.Fixer()
     for i in range(18):
         c.print_digit(i, f)
     f.print_statistics()
     c.check_mesh()
-    c.make_3mf()
+    if args.color:
+        c.make_3mf()
+    else:
+        c.make_stl()
+    return 0
 
 
 def internal_points(r0, r1):
@@ -504,7 +543,8 @@ def internal_points(r0, r1):
 
 
 class BuildModel:
-    def __init__(self):
+    def __init__(self, args):
+        self.args = args
         self.poly = poly18()
         self.flattened = [None] * len(self.poly)
         self.flattened_center = [None] * len(self.poly)
@@ -574,7 +614,7 @@ class BuildModel:
         c = self.find_join_point(v)
         return v if c is None else c
 
-    def make_model(self):
+    def make_stl(self):
         model = mesh.Mesh(
             numpy.zeros(len(self.big_mesh), dtype=mesh.Mesh.dtype)
         )
@@ -583,8 +623,9 @@ class BuildModel:
             model.vectors[i][1] = t.p1.value()
             model.vectors[i][2] = t.p2.value()
         model.check(exact=True)
-        model.save("c:/users/sigma/documents/model18.stl")
-        print("Wrote out model")
+        filename = "c:/users/sigma/documents/model18.stl"
+        model.save(filename)
+        print(f"Wrote out {filename}")
 
     def make_3mf(self):
         # Use the lib3mf library to create a 3mf file containing
@@ -603,25 +644,25 @@ class BuildModel:
         # Create a color group
         color_group = model.AddColorGroup()
 
-        # Define the property of white triangles.
-        white_property_id = color_group.AddColor(
-            wrapper.FloatRGBAToColor(1.0, 1.0, 1.0, 1.0)
+        # Define the property of the triangles that make up the die.
+        background_property_id = color_group.AddColor(
+            wrapper.FloatRGBAToColor(*self.args.background_rgb, 1.0)
         )
-        white_props = lib3mf.TriangleProperties()
-        white_props.ResourceID = color_group.GetResourceID()
-        white_props.PropertyIDs[0] = white_property_id
-        white_props.PropertyIDs[1] = white_property_id
-        white_props.PropertyIDs[2] = white_property_id
+        background_props = lib3mf.TriangleProperties()
+        background_props.ResourceID = color_group.GetResourceID()
+        background_props.PropertyIDs[0] = background_property_id
+        background_props.PropertyIDs[1] = background_property_id
+        background_props.PropertyIDs[2] = background_property_id
 
-        # Define the property of black triangles.
-        black_property_id = color_group.AddColor(
-            wrapper.FloatRGBAToColor(0.0, 0.0, 0.0, 1.0)
+        # Define the property of the triangles that make up the digits.
+        foreground_property_id = color_group.AddColor(
+            wrapper.FloatRGBAToColor(*self.args.foreground_rgb, 1.0)
         )
-        black_props = lib3mf.TriangleProperties()
-        black_props.ResourceID = color_group.GetResourceID()
-        black_props.PropertyIDs[0] = black_property_id
-        black_props.PropertyIDs[1] = black_property_id
-        black_props.PropertyIDs[2] = black_property_id
+        foreground_props = lib3mf.TriangleProperties()
+        foreground_props.ResourceID = color_group.GetResourceID()
+        foreground_props.PropertyIDs[0] = foreground_property_id
+        foreground_props.PropertyIDs[1] = foreground_property_id
+        foreground_props.PropertyIDs[2] = foreground_property_id
 
         mesh_object = model.AddMeshObject()
 
@@ -665,7 +706,7 @@ class BuildModel:
             # mesh_object.AddTriangle are consecutive integers
             # beginning with zero. I don't like that assumption
             # but I couldn't get anything else to work.
-            colors.append(black_props if t.color else white_props)
+            colors.append(foreground_props if t.color else background_props)
 
         mesh_object.SetGeometry(vertices, triangles)
 
@@ -682,10 +723,9 @@ class BuildModel:
         model.AddBuildItem(mesh_object, wrapper.GetIdentityTransform())
 
         # Save the model to a 3MF file
-        model.QueryWriter("3mf").WriteToFile(
-            "c:/users/sigma/documents/model18.3mf"
-        )
-        print("Wrote out model")
+        filename = "c:/users/sigma/documents/model18.3mf"
+        model.QueryWriter("3mf").WriteToFile(filename)
+        print(f"Wrote out {filename}")
 
     def check_mesh(self):
         counter = 0
@@ -876,9 +916,11 @@ class BuildModel:
 
         Font(pen).draw(label)
         pen.write_tile(faceno, fixer)
-        # pen.make_mesh(fixer, faceno)
-        pen.make_colored_mesh(fixer, faceno)
+        if self.args.color:
+            pen.make_colored_mesh(fixer, faceno)
+        else:
+            pen.make_mesh(fixer, faceno)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
