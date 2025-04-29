@@ -371,9 +371,9 @@ class DigitPen:
                 ctx.stroke()
         print(f"Wrote out {filename}")
 
-    def make_mesh(self, fixer, i):
+    def make_mesh(self, fixer, depth, just_numbers, faceno):
         upper_points, upper_triangles, upper_boundary = self.triangulate(
-            fixer, upper=True
+            fixer, upper=not just_numbers
         )
         lower_points, lower_triangles, lower_boundary = self.triangulate(
             fixer, upper=False
@@ -409,7 +409,6 @@ class DigitPen:
         def to_upper(p):
             return p + len(lower_points)
 
-        depth = 0.025 * self.builder.args.size
         combined_points = []
         for p in lower_points:
             combined_points.append((p[0], p[1], -depth))
@@ -443,7 +442,7 @@ class DigitPen:
         # original 3d coordinates.
         for j, p in enumerate(combined_points):
             combined_points[j] = self.builder.correct(
-                self.builder.rotate_back(p, i)
+                self.builder.rotate_back(p, faceno)
             )
 
         for p in combined_points:
@@ -484,10 +483,16 @@ class DigitPen:
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="die18", description="A 3D Model of an 18-sided die"
+        prog="trifont", description="A 3D Model of an 18-sided die"
     )
     parser.add_argument(
         "-c", "--color", action="store_true", help="Create color model"
+    )
+    parser.add_argument(
+        "-n",
+        "--numbers",
+        action="store_true",
+        help="Numbers to fill the indents",
     )
     parser.add_argument(
         "-f", "--foreground", default="black", help="Color of the numbers"
@@ -499,13 +504,26 @@ def main():
         "--obj", action="store_true", help="Write out a .obj file"
     )
     parser.add_argument(
+        "--split", action="store_true", help="Write two .stl files"
+    )
+    parser.add_argument(
         "-s",
         "--size",
         type=float,
         default=20.0,
         help="Size of the die in mm from face to face",
     )
+    parser.add_argument(
+        "-d",
+        "--depth",
+        type=float,
+        default=2,
+        help="Depth of the indented numbers in mm",
+    )
     args = parser.parse_args()
+
+    if args.split:
+        args.color = True
 
     args_error = None
     try:
@@ -531,6 +549,8 @@ def main():
         c.print_digit(i, f)
     f.print_statistics()
     c.check_mesh()
+    if args.split:
+        c.make_two_stls()
     if args.obj:
         c.make_obj()
     elif args.color:
@@ -636,7 +656,33 @@ class BuildModel:
             model.vectors[i][1] = t.p1.value()
             model.vectors[i][2] = t.p2.value()
         model.check(exact=True)
-        filename = "c:/users/sigma/documents/model18.stl"
+        basename = "numbers18.stl" if self.args.numbers else "model18.stl"
+        filename = f"c:/users/sigma/documents/{basename}"
+        model.save(filename)
+        print(f"Wrote out {filename}")
+
+    def make_two_stls(self):
+        model = mesh.Mesh(
+            numpy.zeros(len(self.big_mesh), dtype=mesh.Mesh.dtype)
+        )
+        for i, t in enumerate(self.big_mesh):
+            if t.color:
+                model.vectors[i][0] = t.p0.value()
+                model.vectors[i][1] = t.p1.value()
+                model.vectors[i][2] = t.p2.value()
+        filename = "c:/users/sigma/documents/numbers.stl"
+        model.save(filename)
+        print(f"Wrote out {filename}")
+
+        model = mesh.Mesh(
+            numpy.zeros(len(self.big_mesh), dtype=mesh.Mesh.dtype)
+        )
+        for i, t in enumerate(self.big_mesh):
+            if not t.color:
+                model.vectors[i][0] = t.p0.value()
+                model.vectors[i][1] = t.p1.value()
+                model.vectors[i][2] = t.p2.value()
+        filename = "c:/users/sigma/documents/die.stl"
         model.save(filename)
         print(f"Wrote out {filename}")
 
@@ -743,6 +789,7 @@ class BuildModel:
     def make_obj(self):
         # Create an index of all the 3D coordinates in the input mesh.
         points = dict()
+        white_points = set()
         next = 0
 
         def add_point(p):
@@ -750,23 +797,34 @@ class BuildModel:
             if points.setdefault(p, next) == next:
                 next += 1
 
+        colored_triangles = 0
         for t in self.big_mesh:
             add_point(t.p0.value())
             add_point(t.p1.value())
             add_point(t.p2.value())
+            if getattr(t, "color", False):
+                colored_triangles += 1
+        print(f"{colored_triangles} colored triangles")
 
         # Create a list of vertices indexed by the integers assigned
         # and written into dict.
         vertices = len(points) * [None]
         for p, i in points.items():
-            vertices[i] = p
+            vertices[i] = (p, p in white_points)
 
         used_colors = []
         filename = "c:/users/sigma/documents/model18.obj"
         with open(filename, "w") as file:
             file.write("#obj file for 18-sided die\n")
-            for v in vertices:
-                file.write(f"v {repr(v[0])} {repr(v[1])} {repr(v[2])}\n")
+            fore_c = self.args.foreground_rgb
+            back_c = self.args.background_rgb
+
+            for v, white in vertices:
+                rgb = back_c if white else fore_c
+                file.write(
+                    f"v {repr(v[0])} {repr(v[1])} {repr(v[2])} "
+                    f"{rgb[0]} {rgb[1]} {rgb[2]}\n"
+                )
 
             # Make three passes over the mesh to sort by color.
             for color in (None, True, False):
@@ -1005,7 +1063,12 @@ class BuildModel:
         if self.args.color:
             pen.make_colored_mesh(fixer, faceno)
         else:
-            pen.make_mesh(fixer, faceno)
+            pen.make_mesh(
+                fixer,
+                depth=self.args.depth,
+                just_numbers=self.args.numbers,
+                faceno=faceno,
+            )
 
 
 if __name__ == "__main__":
